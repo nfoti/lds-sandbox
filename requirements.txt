@@ -1,0 +1,2 @@
+
+git+git://github.com/mattjj/autograd_linalg.git#egg=master
