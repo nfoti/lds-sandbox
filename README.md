@@ -8,6 +8,6 @@ Sandbox for linear dynamical system coding stuff. This will be mostly in
 Getting Started
 ---------------
 
--. Install dependencies with `pip install -r requirements.txt` making sure
-   that the correct environment is activated.
+- Install dependencies with `pip install -r requirements.txt` making sure
+  that the correct environment is activated.
 
