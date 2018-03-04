@@ -286,12 +286,13 @@ def rts_smooth(Y, A, C, Q, R, mu0, Q0):
         #tmp1 = np.einsum('ik,nkj->nij', C, sigma_predict)
         tmp1 = einsum2('ik,nkj->nij', C, sigma_predict[:,t,:,:])
         sigma_pred = np.dot(tmp1, C.T) + R
+        sigma_pred = sym(sigma_pred)
 
         L = np.linalg.cholesky(sigma_pred)
         # res[n] = Y[n,t,:] = np.dot(C, mu_predict[n])
         # the transpose works b/c of how dot broadcasts
         res = Y[...,t,:] - np.dot(mu_predict[:,t,:], C.T)
-        v = solve_triangular(L, res)
+        v = solve_triangular(L, res, lower=True)
         
         # log-likelihood over all trials
         ll += (-0.5*np.sum(v*v)
@@ -299,11 +300,13 @@ def rts_smooth(Y, A, C, Q, R, mu0, Q0):
                - N/2.*np.log(2.*np.pi))
 
         #mus_smooth[...,t,:] = mu_predict + np.einsum('nki,nk->ni', tmp1, solve_triangular(L, v, 'T'))
-        mus_smooth[...,t,:] = mu_predict[:,t,:] + einsum2('nki,nk->ni', tmp1, solve_triangular(L, v, 'T'))
+        mus_smooth[...,t,:] = mu_predict[:,t,:] + einsum2('nki,nk->ni',
+                                                          tmp1,
+                                                          solve_triangular(L, v, 'T', lower=True))
 
-        tmp2 = solve_triangular(L, tmp1)
+        tmp2 = solve_triangular(L, tmp1, lower=True)
         #sigmas_smooth[...,t,:,:] = sigma_predict - np.einsum('nki,nkj->nij', tmp2, tmp2)
-        sigmas_smooth[...,t,:,:] = sigma_predict[:,t,:,:] - einsum2('nki,nkj->nij', tmp2, tmp2)
+        sigmas_smooth[...,t,:,:] = sym(sigma_predict[:,t,:,:] - einsum2('nki,nkj->nij', tmp2, tmp2))
 
         # prediction
         #mu_predict = np.dot(A[t], mus_smooth[t])
@@ -312,18 +315,18 @@ def rts_smooth(Y, A, C, Q, R, mu0, Q0):
 
         #sigma_predict = dot3(A[t], sigmas_smooth[t], A[t].T) + Q[t]
         #sigma_predict = np.einsum('ik,nkl,jl->nij', A[t], sigmas_smooth[...,t,:,:], A[t]) + Q[t]
-        sigma_predict[:,t+1,:,:] = einsum2('ik,nkl->nil', A[t], sigmas_smooth[...,t,:,:])
-        sigma_predict[:,t+1,:,:] = einsum2('nil,jl->nij', sigma_predict[:,t+1,:,:], A[t]) + Q[t]
-            
+        tmp = einsum2('ik,nkl->nil', A[t], sigmas_smooth[:,t,:,:])
+        sigma_predict[:,t+1,:,:] = sym(einsum2('nil,jl->nij', tmp, A[t]) + Q[t])
+
     for t in range(T-2, -1, -1):
-        
+
         # these names are stolen from mattjj and scott
         #temp_nn = np.dot(A[t], sigmas_smooth[n,t,:,:])
         temp_nn = einsum2('ik,nkj->nij', A[t], sigmas_smooth[:,t,:,:])
         L = np.linalg.cholesky(sigma_predict[:,t+1,:,:])
 
-        v = solve_triangular(L, temp_nn)
-        Gt_T = solve_triangular(L, v, 'T')
+        v = solve_triangular(L, temp_nn, lower=True)
+        Gt_T = solve_triangular(L, v, 'T', lower=True)
 
         # {mus,sigmas}_smooth[n,t] contain the filtered estimates so we're
         # overwriting them on purpose
@@ -333,7 +336,7 @@ def rts_smooth(Y, A, C, Q, R, mu0, Q0):
         #sigmas_smooth[n,t,:,:] = sigmas_smooth[n,t,:,:] + dot3(T_(Gt_T), sigmas_smooth[n,t+1,:,:] - temp_nn, Gt_T)
         tmp = einsum2('nki,nkj->nij', Gt_T, sigmas_smooth[:,t+1,:,:] - temp_nn)
         tmp = einsum2('nik,nkj->nij', tmp, Gt_T)
-        sigmas_smooth[:,t,:,:] = sigmas_smooth[:,t,:,:] + tmp
+        sigmas_smooth[:,t,:,:] = sym(sigmas_smooth[:,t,:,:] + tmp)
 
         #sigmas_smooth_tnt[n,t,:,:] = np.dot(sigmas_smooth[n,t+1,:,:], Gt_T)
         sigmas_smooth_tnt[:,t,:,:] = einsum2('nik,nkj->nij', sigmas_smooth[:,t+1,:,:], Gt_T)
