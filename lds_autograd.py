@@ -208,39 +208,125 @@ if __name__ == "__main__":
         params = unflatten(params_flat)
         return -logZ(params) + penalty(params)
 
+    fig = plt.figure()
+    fig_quad, axes_quad = plt.subplots(d, d)
     def make_callback():
         it = 0
         def callback(params):
             nonlocal it
             it += 1
             print("it: {} Log likelihood (penalized) {}".format(it, -objective(params)))
+
+            A_est, L_Q_est = unflatten(params)
+            Q_est = np.dot(L_Q_est, L_Q_est.T)
+            fig.clear()
+            ax_true = fig.add_subplot(3,1,1)
+            ax_init = fig.add_subplot(3,1,2)
+            ax_est = fig.add_subplot(3,1,3)
+            ax_true.plot(np.reshape(A[:-1], (-1, d**2)))
+            ax_true.set_title("True $A_t$")
+            ax_true.set_ylim(-0.5, 0.5)
+            ax_init.plot(np.reshape(A_init[:-1], (-1, d**2)))
+            ax_init.set_title("Init. $A_t$")
+            ax_init.set_ylim(-0.5, 0.5)
+            ax_est.plot(np.reshape(A_est, (-1, d**2)))
+            ax_est.set_title("Est. $A_t$")
+            ax_est.set_ylim(-0.5, 0.5)
+
+            for i in range(d):
+                for j in range(d):
+                    axes_quad[i,j].cla()
+                    axes_quad[i,j].plot(A[:-1, i, j])
+                    axes_quad[i,j].plot(A_est[:-1, i,j])
+                    axes_quad[i,j].set_title("A[%d,%d]" % (i, j))
+                    axes_quad[i,j].set_ylim(-0.5, 0.5)
+
+            plt.ion()
+            fig.canvas.draw()
+            fig_quad.canvas.draw()
+            plt.pause(1./60.)
+
         return callback
     callback = make_callback()
 
-    spoptions = dict(ftol=1e-4, gtol=1e-4)
+    spoptions = dict(maxiter=100)
+    #spoptions = dict(ftol=1e-6, gtol=1e-6)
+    #spoptions = dict(ftol=1e-4, gtol=1e-4)
+    #spoptions = dict(ftol=1e-3, gtol=1e-3)
     res = minimize(objective, params_flat, method='L-BFGS-B',
+    #spoptions = dict(inexact=False)
+    #res = minimize(objective, params_flat, method='trust-krylov',
                    jac=grad(objective),
+                   hessp=lambda x, v: make_hvp(objective)(x)[0](v),
                    callback=callback,
+                   #tol=1e-6,
                    options=spoptions)
     new_params = unflatten(res.x)
     print("opt success: ", res.success)
     print("opt message: ", res.message)
+    #A_est_full, Q_est = new_params
+    A_est_full, L_Q_est = new_params
+    Q_est = np.dot(L_Q_est, L_Q_est.T)
 
-    A_est, L_Q_est = new_params
-    A_est = A_est[:-1]
-    Q_est = einsum2('nik,njk->nij', L_Q_est, L_Q_est)
+    # try stochastic gradient (sample minibatch, scale objective and gradient,
+    # no line-search), then fine-tune with a quasi-second order method for a
+    # few iters
 
-    import matplotlib.pyplot as plt
-    fig = plt.figure()
+    #grad_AQ = grad(objective)
+    #tau = 0.8
+    #for gd_iter in range(100):
+    #    step_size = 1.
+    #    obj_start = objective(params_flat)
+    #    grad_flat = grad_AQ(params_flat)
+    #    tmp_diff = np.inf
+    #    while tmp_diff > 0:
+    #        params_new_flat = params_flat - step_size * grad_flat
+    #        ref = obj_start - step_size/2. * np.sum(params_new_flat**2)
+
+    #        obj = objective(params_new_flat)
+    #        tmp_diff = obj - ref
+    #        step_size *= tau
+    #    print('iter:', gd_iter, 'step size:', step_size/0.8, ' -- gradA_norm:', np.linalg.norm(grad_flat), ' -- obj:', obj)
+    #    callback(params_new_flat)
+    #    params_flat = params_new_flat
+
+    ##A_est_full, Q_est = unflatten(params_flat)
+    #A_est_full, L_Q_est = unflatten(params_flat)
+    #Q_est = np.dot(L_Q_est, L_Q_est.T)
+
+    #A_est = new_params
+    #A_est, L_Q_est = new_params
+
+    A_est = A_est_full[:-1]
+    #Q_est = einsum2('nik,njk->nij', L_Q_est, L_Q_est)
+
+    #fig = plt.figure()
+    fig.clear()
     ax_true = fig.add_subplot(3,1,1)
     ax_init = fig.add_subplot(3,1,2)
     ax_est = fig.add_subplot(3,1,3)
     ax_true.plot(np.reshape(A[:-1], (-1, d**2)))
     ax_true.set_title("True $A_t$")
+    ax_true.set_ylim(-0.5, 0.5)
     ax_init.plot(np.reshape(A_init[:-1], (-1, d**2)))
     ax_init.set_title("Init. $A_t$")
+    ax_init.set_ylim(-0.5, 0.5)
     ax_est.plot(np.reshape(A_est, (-1, d**2)))
     ax_est.set_title("Est. $A_t$")
+    ax_est.set_ylim(-0.5, 0.5)
 
+
+    from lds import rts_smooth
+    Q_est = np.dot(L_Q_est, L_Q_est.T)
+    Q_t = np.stack([Q_est for _ in range(T)], axis=0)
+    _, x_smooth, _, _ = rts_smooth(Y, A_est_full, C, Q_t, R, mu0, Q0)
+    _, x_smooth_true, _, _ = rts_smooth(Y, A, C, np.stack([Q for _ in range(T)], axis=0), R, mu0, Q0)
+    fig_sm, axes_sm = plt.subplots(2,1, sharey=True)
+    for j in range(d):
+        axes_sm[j].plot(np.mean(x[:,:,j], axis=0))
+        axes_sm[j].plot(np.mean(x_smooth[:,:,j], axis=0))
+        axes_sm[j].plot(np.mean(x_smooth_true[:,:,j], axis=0))
+
+    plt.ion()
     plt.show()
 
