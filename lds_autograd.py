@@ -37,6 +37,21 @@ square = lambda X: np.dot(X, T_(X))
 rand_psd = lambda n: square(np.random.randn(n, n))
 
 
+def gen_amp_mod_At(T, D_roi):
+
+    At = np.zeros((T, D_roi, D_roi))
+    At = np.array([0.4*np.eye(D_roi) for _ in range(T)])
+
+    f01 = np.sin(np.linspace(0., 2*np.pi, num=T))
+    f10 = -4.*np.sin(np.linspace(0., 2*np.pi, num=T) + 1.2)*f01
+
+    At[:, 0, 1] = f01*np.random.rand()*np.sign(np.random.randn())
+    At[:, 1, 0] = f10*np.random.rand()*np.sign(np.random.randn())
+    At[-1] = np.zeros((D_roi, D_roi))
+
+    return At
+
+
 def lds_logZ(Y, A, C, Q, R, mu0, Q0):
     """ Log-partition function computed via Kalman filter that broadcasts over
         the first dimension.
