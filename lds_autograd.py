@@ -82,7 +82,7 @@ def lds_logZ(Y, A, C, Q, R, mu0, Q0):
 
     N = Y.shape[0]
     T, D, _ = A.shape
-    d = C.shape[0]
+    p = C.shape[0]
 
     mu_predict = np.stack([mu0 for _ in range(N)], axis=0)
     sigma_predict = np.stack([Q0 for _ in range(N)], axis=0)
@@ -104,12 +104,12 @@ def lds_logZ(Y, A, C, Q, R, mu0, Q0):
         # res[n] = Y[n,t,:] = np.dot(C, mu_predict[n])
         # the transpose works b/c of how dot broadcasts
         res = Y[...,t,:] - einsum2('ik,nk->ni', C, mu_predict)
-        v = solve_triangular(L, res)
+        v = solve_triangular(L, res, lower=True)
         
         # log-likelihood over all trials
         ll += (-0.5*np.sum(v*v)
-               - np.sum(np.log(np.diagonal(L, axis1=-1, axis2=-2))) 
-               - N/2.*np.log(2.*np.pi))
+               - np.sum(np.log(np.diagonal(L, axis1=-1, axis2=-2)))
+               - p/2.*np.log(2.*np.pi))
 
         #mus_filt = mu_predict + np.dot(tmp1, solve_triangular(L, v, 'T'))
         mus_filt = mu_predict + einsum2('nki,nk->ni', tmp1,
@@ -126,7 +126,8 @@ def lds_logZ(Y, A, C, Q, R, mu0, Q0):
 
         #sigma_predict = dot3(A[t], sigmas_filt[t], A[t].T) + Q[t]
         sigma_predict = einsum2('ik,nkl->nil', A[t], sigmas_filt)
-        sigma_predict = einsum2('nil,jl->nij', sigma_predict, A[t]) + Q[t]
+        #sigma_predict = einsum2('nil,jl->nij', sigma_predict, A[t]) + Q[t]
+        sigma_predict = einsum2('nil,jl->nij', sigma_predict, A[t]) + Q
         sigma_predict = sym(sigma_predict)
 
     return ll
