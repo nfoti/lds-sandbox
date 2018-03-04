@@ -141,15 +141,15 @@ if __name__ == "__main__":
     from sim import lds_simulate_loop, rand_stable
 
     T = 50 #20 #165
-    ntrials = 800 #200
+    ntrials = 200
     #theta = 1.2
     #A = np.array([[np.cos(theta), np.sin(theta)], [-np.sin(theta), np.cos(theta)]])
 
     # the same for convenience. constructing reasonable C from small to large
     # dimensions is tricky
 
-    d = 7
-    D = 10
+    d = 2
+    D = 10 #100
 
     #d = 5
     #D = 6
