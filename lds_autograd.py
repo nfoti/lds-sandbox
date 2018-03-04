@@ -2,11 +2,15 @@ from __future__ import division
 from __future__ import print_function
 
 import autograd.numpy as np
-from autograd import grad
-from autograd.util import flatten
-from autograd.optimizers import adam, sgd
+import matplotlib.pyplot as plt
 
+from autograd import grad, make_hvp
+from autograd.misc import flatten
+from autograd.misc.optimizers import adam, sgd
+
+from scipy.linalg import LinAlgError
 from scipy.optimize import minimize
+
 
 try:
     from autograd_linalg import solve_triangular
