@@ -2,11 +2,22 @@ from __future__ import division
 from __future__ import print_function
 
 import numpy as np
+from numpy.lib.stride_tricks import as_strided
+
+
+def _ensure_ndim(X, T, ndim):
+    X = np.require(X,dtype=np.float64, requirements='C')
+    assert ndim-1 <= X.ndim <= ndim
+    if X.ndim == ndim:
+        assert X.shape[0] == T
+        return X
+    else:
+        return as_strided(X, shape=(T,)+X.shape, strides=(0,)+X.strides)
 
 
 def rand_stable(d, s=0.9):
     A = np.random.randn(d, d)
-    A *= 0.95 / np.max(np.abs(np.linalg.eigvals(A)))
+    A *= s / np.max(np.abs(np.linalg.eigvals(A)))
     return A
 
 
@@ -21,6 +32,8 @@ def lds_simulate_loop(T, A, C, Q, R, mu0, Q0, ntrials):
 
     L_R = np.linalg.cholesky(R)
     L_Q = np.linalg.cholesky(Q)
+
+    L_Q = _ensure_ndim(L_Q, T, 3)
 
     for n in range(ntrials):
         x[n,0] = np.random.multivariate_normal(mu0, cov=Q0)
