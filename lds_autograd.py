@@ -140,8 +140,8 @@ if __name__ == "__main__":
 
     from sim import lds_simulate_loop, rand_stable
 
-    T = 165
-    ntrials = 100
+    T = 50 #20 #165
+    ntrials = 800 #200
     #theta = 1.2
     #A = np.array([[np.cos(theta), np.sin(theta)], [-np.sin(theta), np.cos(theta)]])
 
@@ -154,15 +154,17 @@ if __name__ == "__main__":
     #d = 5
     #D = 6
 
-    A = rand_stable(d)
-    A = np.stack([A for _ in range(T)], axis=0)
+    #A = rand_stable(d)
+    #A = np.stack([A for _ in range(T)], axis=0)
+    A = gen_amp_mod_At(T, d)
 
     #C = np.eye(D)[:,:d]
     C = np.random.randn(D, d)
     C, _ = np.linalg.qr(C)
 
-    Q0 = 0.2*np.eye(d)
-    Q = np.stack([0.1*np.eye(d) for _ in range(T)], axis=0)
+    Q0 = 0.1*np.eye(d) #rand_psd(d)
+    #Q = 0.1*np.eye(d)
+    Q = 0.2*rand_psd(d)
     Q_true = Q.copy()
 
     R = 0.1*np.eye(D)
@@ -171,30 +173,48 @@ if __name__ == "__main__":
 
     x, Y = lds_simulate_loop(T, A, C, Q, R, mu0, Q0, ntrials)
 
+    # L_Q parameterization
     def logZ(params):
 
         A, L_Q_full = params
 
-        L_Q = np.stack([L*np.tril(np.ones_like(L)) for L in L_Q_full], axis=0)
-        Q = einsum2('nik,njk->nij', L_Q, L_Q)
+        L_Q = L_Q_full*np.tril(np.ones_like(L_Q_full))
+        Q = np.dot(L_Q, L_Q.T)
         
         return lds_logZ(Y, A, C, Q, R, mu0, Q0) / Y.shape[0]
 
-    lam = 1e3
+    ## Q parameterization
+    #def logZ(params):
+    #    A, Q = params
+    #    try:
+    #        np.linalg.cholesky(Q)
+    #    except LinAlgError:
+    #        return -np.finfo('float').max
+    #    #A = params
+    #    #return lds_logZ(Y, A, C, Q, R, mu0, Q0) / Y.shape[0]
+    #    return lds_logZ(Y, A, C, Q, R, mu0, Q0)
+
+    lam = 1.
     def penalty(params):
         At, _ = params
+        #At = params
         return lam*np.sum((At[1:] - At[:-1])**2)
 
-    #A_init = rand_stable(d)
+    #A_init = 0.7*rand_stable(d)
     #A_init = np.stack([A_init for _ in range(T)], axis=0)
-    A_init = np.stack([rand_stable(d) for _ in range(T)], axis=0)
-    Q_init = np.stack([rand_psd(d) for _ in range(T)], axis=0)
-    L_Q_init = np.linalg.cholesky(Q_init)
 
-    #A_init = A.copy()
-    #L_Q_init = np.linalg.cholesky(Q)
+    # These worked with lam=1. and L-BFGS-B
+    np.random.seed(1337)
+    A_init = np.stack([rand_stable(d, s=0.7) for _ in range(T)], axis=0)
+    Q_init = 0.7*rand_psd(d)
 
+    #A_init = A.copy() + 0.1*np.random.randn(*A.shape)
+    #Q_init = Q.copy()
+    #params = (A_init, Q_init)
+
+    L_Q_init = np.linalg.cholesky(Q)
     params = (A_init, L_Q_init)
+    #params = A_init
 
     #objective = lambda params, i: -logZ(params) + penalty(params)
     #def callback(params, i, g):
