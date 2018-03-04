@@ -172,24 +172,24 @@ def kalman_filter(Y, A, C, Q, R, mu0, Q0):
         #tmp1 = np.einsum('ik,nkj->nij', C, sigma_predict)
         tmp1 = einsum2('ik,nkj->nij', C, sigma_predict)
         sigma_pred = np.dot(tmp1, C.T) + R
+        sigma_pred = sym(sigma_pred)
 
         L = np.linalg.cholesky(sigma_pred)
         # res[n] = Y[n,t,:] = np.dot(C, mu_predict[n])
         # the transpose works b/c of how dot broadcasts
         res = Y[...,t,:] - np.dot(mu_predict, C.T)
-        v = solve_triangular(L, res)
+        v = solve_triangular(L, res, lower=True)
         
         # log-likelihood over all trials
         ll += (-0.5*np.sum(v*v)
                - np.sum(np.log(np.diagonal(L, axis1=1, axis2=2))) 
                - N/2.*np.log(2.*np.pi))
 
-        #mus_filt[...,t,:] = mu_predict + np.einsum('nki,nk->ni', tmp1, solve_triangular(L, v, 'T'))
-        mus_filt[...,t,:] = mu_predict + einsum2('nki,nk->ni', tmp1, solve_triangular(L, v, 'T'))
+        mus_filt[...,t,:] = mu_predict + einsum2('nki,nk->ni', tmp1, solve_triangular(L, v, 'T', lower=True))
 
         tmp2 = solve_triangular(L, tmp1)
         #sigmas_filt[...,t,:,:] = sigma_predict - np.einsum('nki,nkj->nij', tmp2, tmp2)
-        sigmas_filt[...,t,:,:] = sigma_predict - einsum2('nki,nkj->nij', tmp2, tmp2)
+        sigmas_filt[...,t,:,:] = sym(sigma_predict - einsum2('nki,nkj->nij', tmp2, tmp2))
 
         # prediction
         #mu_predict = np.dot(A[t], mus_filt[t])
@@ -198,8 +198,8 @@ def kalman_filter(Y, A, C, Q, R, mu0, Q0):
 
         #sigma_predict = dot3(A[t], sigmas_filt[t], A[t].T) + Q[t]
         #sigma_predict = np.einsum('ik,nkl,jl->nij', A[t], sigmas_filt[...,t,:,:], A[t]) + Q[t]
-        sigma_predict = einsum2('ik,nkl->nil', A[t], sigmas_filt[...,t,:,:])
-        sigma_predict = einsum2('nil,jl->nij', sigma_predict, A[t]) + Q[t]
+        tmp = einsum2('ik,nkl->nil', A[t], sigmas_filt[...,t,:,:])
+        sigma_predict = sym(einsum2('nil,jl->nij', tmp, A[t]) + Q[t])
 
     return ll, mus_filt, sigmas_filt
 
@@ -338,6 +338,7 @@ def rts_smooth(Y, A, C, Q, R, mu0, Q0):
         tmp = einsum2('nik,nkj->nij', tmp, Gt_T)
         sigmas_smooth[:,t,:,:] = sym(sigmas_smooth[:,t,:,:] + tmp)
 
+        # don't symmetrize this one
         #sigmas_smooth_tnt[n,t,:,:] = np.dot(sigmas_smooth[n,t+1,:,:], Gt_T)
         sigmas_smooth_tnt[:,t,:,:] = einsum2('nik,nkj->nij', sigmas_smooth[:,t+1,:,:], Gt_T)
 
@@ -387,11 +388,11 @@ if __name__ == "__main__":
     #assert np.allclose(mus_filt, mus_filt_loop)
     #assert np.allclose(sigmas_filt, sigmas_filt_loop)
 
-    print("running rts tests")
-    ll1, mus_smooth1, sigmas_smooth1, sigmas_smooth_tnt1 = rts_smooth_loop(Y, A, C, Q, R, mu0, Q0)
-    ll, mus_smooth, sigmas_smooth, sigmas_smooth_tnt = rts_smooth(Y, A, C, Q, R, mu0, Q0)
+    #print("running rts tests")
+    #ll1, mus_smooth1, sigmas_smooth1, sigmas_smooth_tnt1 = rts_smooth_loop(Y, A, C, Q, R, mu0, Q0)
+    #ll, mus_smooth, sigmas_smooth, sigmas_smooth_tnt = rts_smooth(Y, A, C, Q, R, mu0, Q0)
 
-    assert np.allclose(ll, ll1)
-    assert np.allclose(mus_smooth, mus_smooth1)
-    assert np.allclose(sigmas_smooth, sigmas_smooth1)
-    assert np.allclose(sigmas_smooth_tnt, sigmas_smooth_tnt1)
+    #assert np.allclose(ll, ll1)
+    #assert np.allclose(mus_smooth, mus_smooth1)
+    #assert np.allclose(sigmas_smooth, sigmas_smooth1)
+    #assert np.allclose(sigmas_smooth_tnt, sigmas_smooth_tnt1)
