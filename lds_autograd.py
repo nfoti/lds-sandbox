@@ -140,8 +140,8 @@ if __name__ == "__main__":
 
     from sim import lds_simulate_loop, rand_stable
 
-    T = 50 #20 #165
-    ntrials = 200
+    T = 20 #165
+    ntrials = 800 #200
     #theta = 1.2
     #A = np.array([[np.cos(theta), np.sin(theta)], [-np.sin(theta), np.cos(theta)]])
 
@@ -181,7 +181,7 @@ if __name__ == "__main__":
         L_Q = L_Q_full*np.tril(np.ones_like(L_Q_full))
         Q = np.dot(L_Q, L_Q.T)
         
-        return lds_logZ(Y, A, C, Q, R, mu0, Q0) / Y.shape[0]
+        return lds_logZ(Y, A, C, Q, R, mu0, Q0)
 
     ## Q parameterization
     #def logZ(params):
@@ -191,7 +191,6 @@ if __name__ == "__main__":
     #    except LinAlgError:
     #        return -np.finfo('float').max
     #    #A = params
-    #    #return lds_logZ(Y, A, C, Q, R, mu0, Q0) / Y.shape[0]
     #    return lds_logZ(Y, A, C, Q, R, mu0, Q0)
 
     lam = 1.
@@ -228,10 +227,11 @@ if __name__ == "__main__":
         params = unflatten(params_flat)
         return -logZ(params) + penalty(params)
 
-    fig = plt.figure()
-    fig_quad, axes_quad = plt.subplots(d, d)
     def make_callback():
         it = 0
+        #fig = plt.figure()
+        fig_quad, axes_quad = plt.subplots(d, d)
+
         def callback(params):
             nonlocal it
             it += 1
@@ -239,19 +239,19 @@ if __name__ == "__main__":
 
             A_est, L_Q_est = unflatten(params)
             Q_est = np.dot(L_Q_est, L_Q_est.T)
-            fig.clear()
-            ax_true = fig.add_subplot(3,1,1)
-            ax_init = fig.add_subplot(3,1,2)
-            ax_est = fig.add_subplot(3,1,3)
-            ax_true.plot(np.reshape(A[:-1], (-1, d**2)))
-            ax_true.set_title("True $A_t$")
-            ax_true.set_ylim(-0.5, 0.5)
-            ax_init.plot(np.reshape(A_init[:-1], (-1, d**2)))
-            ax_init.set_title("Init. $A_t$")
-            ax_init.set_ylim(-0.5, 0.5)
-            ax_est.plot(np.reshape(A_est, (-1, d**2)))
-            ax_est.set_title("Est. $A_t$")
-            ax_est.set_ylim(-0.5, 0.5)
+            #fig.clear()
+            #ax_true = fig.add_subplot(3,1,1)
+            #ax_init = fig.add_subplot(3,1,2)
+            #ax_est = fig.add_subplot(3,1,3)
+            #ax_true.plot(np.reshape(A[:-1], (-1, d**2)))
+            #ax_true.set_title("True $A_t$")
+            #ax_true.set_ylim(-0.5, 0.5)
+            #ax_init.plot(np.reshape(A_init[:-1], (-1, d**2)))
+            #ax_init.set_title("Init. $A_t$")
+            #ax_init.set_ylim(-0.5, 0.5)
+            #ax_est.plot(np.reshape(A_est, (-1, d**2)))
+            #ax_est.set_title("Est. $A_t$")
+            #ax_est.set_ylim(-0.5, 0.5)
 
             for i in range(d):
                 for j in range(d):
@@ -262,7 +262,7 @@ if __name__ == "__main__":
                     axes_quad[i,j].set_ylim(-0.5, 0.5)
 
             plt.ion()
-            fig.canvas.draw()
+            #fig.canvas.draw()
             fig_quad.canvas.draw()
             plt.pause(1./60.)
 
@@ -309,7 +309,6 @@ if __name__ == "__main__":
     #    print('iter:', gd_iter, 'step size:', step_size/0.8, ' -- gradA_norm:', np.linalg.norm(grad_flat), ' -- obj:', obj)
     #    callback(params_new_flat)
     #    params_flat = params_new_flat
-
     ##A_est_full, Q_est = unflatten(params_flat)
     #A_est_full, L_Q_est = unflatten(params_flat)
     #Q_est = np.dot(L_Q_est, L_Q_est.T)
@@ -319,22 +318,6 @@ if __name__ == "__main__":
 
     A_est = A_est_full[:-1]
     #Q_est = einsum2('nik,njk->nij', L_Q_est, L_Q_est)
-
-    #fig = plt.figure()
-    fig.clear()
-    ax_true = fig.add_subplot(3,1,1)
-    ax_init = fig.add_subplot(3,1,2)
-    ax_est = fig.add_subplot(3,1,3)
-    ax_true.plot(np.reshape(A[:-1], (-1, d**2)))
-    ax_true.set_title("True $A_t$")
-    ax_true.set_ylim(-0.5, 0.5)
-    ax_init.plot(np.reshape(A_init[:-1], (-1, d**2)))
-    ax_init.set_title("Init. $A_t$")
-    ax_init.set_ylim(-0.5, 0.5)
-    ax_est.plot(np.reshape(A_est, (-1, d**2)))
-    ax_est.set_title("Est. $A_t$")
-    ax_est.set_ylim(-0.5, 0.5)
-
 
     from lds import rts_smooth
     Q_est = np.dot(L_Q_est, L_Q_est.T)
