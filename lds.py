@@ -443,7 +443,7 @@ def em_objective(Y, params, fixedparams, ldsregparams,
     return L1 + L2 + L3 + penalty, L1, L2, L3, penalty
 
 
-def em(Y, initparams, fixedparams, ldsregparams, niter=10, Atrue=None):
+def em(Y, initparams, fixedparams, ldsregparams, niter=10, Atrue=None, num_objvals=5, tol=1e-6):
 
     A_init, Q_init, Q0_init = initparams
     A = A_init.copy()
@@ -462,7 +462,7 @@ def em(Y, initparams, fixedparams, ldsregparams, niter=10, Atrue=None):
 
     lam0, lam1 = ldsregparams
     
-    em_obj_list = list()
+    em_obj_list = np.zeros(niter)
 
     At = A[:-1]
 
@@ -514,7 +514,15 @@ def em(Y, initparams, fixedparams, ldsregparams, niter=10, Atrue=None):
         it_fixedparams = (C, L_R)
         em_obj, L1, L2, L3, penalty = em_objective(Y, it_params, it_fixedparams, ldsregparams,
                               mus_smooth, sigmas_smooth, sigmas_smooth_tnt)
-        em_obj_list.append(em_obj)
+        em_obj_list[em_it] = em_obj
+
+        # check for convergence
+        if em_it >= num_objvals:
+            vals_to_check = em_obj_list[em_it-num_objvals:em_it]
+            if np.all(np.abs((vals_to_check - em_obj) / em_obj) <= tol):
+                print('EM objective converged')
+                em_obj_list = em_obj_list[:em_it+1]
+                break
 
         print('em iter:', em_it+1, 'EM objective: ', em_obj)
         print('  L1:', L1)
