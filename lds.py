@@ -326,7 +326,7 @@ def rts_smooth(Y, A, C, Q, R, mu0, Q0):
         # log-likelihood over all trials
         ll += (-0.5*np.sum(v*v)
                - 2.*np.sum(np.log(np.diagonal(L, axis1=1, axis2=2))) 
-               - N/2.*np.log(2.*np.pi))
+               - p/2.*np.log(2.*np.pi))
 
         #mus_smooth[...,t,:] = mu_predict + np.einsum('nki,nk->ni', tmp1, solve_triangular(L, v, 'T'))
         mus_smooth[...,t,:] = mu_predict[:,t,:] + einsum2('nki,nk->ni',
@@ -355,6 +355,7 @@ def rts_smooth(Y, A, C, Q, R, mu0, Q0):
         L = np.linalg.cholesky(sigma_predict[:,t+1,:,:])
 
         v = solve_triangular(L, temp_nn, lower=True)
+        # Look in Saarka for dfn of Gt_T
         Gt_T = solve_triangular(L, v, trans='T', lower=True)
 
         # {mus,sigmas}_smooth[n,t] contain the filtered estimates so we're
@@ -541,10 +542,7 @@ def em(Y, initparams, fixedparams, ldsregparams, niter=10, Atrue=None, num_objva
         Q0 = 1./(ntrials) * B0
 
         # joint objective for At and L_Q
-        def L2_obj(At_and_L_Q):
-
-            At, L_Q_full = At_and_L_Q
-            L_Q = L_Q_full * np.tril(np.ones(L_Q_full.shape))
+        def L2_obj(At, L_Q):
 
             AtB2T = einsum2('tik,tjk->tij', At, B2)
             B2AtT = einsum2('tik,tjk->tij', B2, At)
@@ -554,18 +552,17 @@ def em(Y, initparams, fixedparams, ldsregparams, niter=10, Atrue=None, num_objva
             AtB3AtT = einsum2('til,tjl->tij', tmp, At)
             elbo_2 = np.sum(B1 - AtB2T - B2AtT + AtB3AtT, axis=0)
 
-            obj = ntrials*T*2.*np.sum(np.log(np.diag(L_Q)))
             L_Q_inv_elbo_2 = solve_triangular(L_Q, elbo_2, lower=True)
-            obj += np.trace(solve_triangular(L_Q, L_Q_inv_elbo_2, lower=True, trans='T'))
+            obj = np.trace(solve_triangular(L_Q, L_Q_inv_elbo_2, lower=True, trans='T'))
             obj += lam0*np.sum(At**2)
             AtmAtm1_2 = (At[1:] - At[:-1])**2
             obj += lam1*np.sum(AtmAtm1_2)
             return obj
 
         # gradient descent
-        grad_fun = grad(L2_obj)
+        grad_fun = grad(lambda At: L2_obj(At, L_Q))
         obj_diff = np.finfo('float').max
-        obj = L2_obj((At, L_Q))
+        obj = L2_obj(At, L_Q)
         it = 0
         maxiter = 100
         while np.abs(obj_diff / obj) > 1e-6:
@@ -573,31 +570,19 @@ def em(Y, initparams, fixedparams, ldsregparams, niter=10, Atrue=None, num_objva
             if it > maxiter:
                 break
 
-            obj_start = L2_obj((At, L_Q))
-            grad_A_un, grad_L_Q_un = grad_fun((At, L_Q))
+            obj_start = L2_obj(At, L_Q)
+            grad_A_un = grad_fun(At)
             grad_A = grad_A_un # / np.linalg.norm(grad_A_un.flatten())
-            grad_L_Q = grad_L_Q_un # / np.linalg.norm(grad_L_Q_un.flatten())
             tmp_diff = np.inf
             step_size = 1.
             tau = 0.8
             while tmp_diff > 0:
                 new_At = At - step_size * grad_A
-                #new_L_Q = L_Q - step_size * grad_L_Q
-                
-                #Q_ = np.dot(new_L_Q, new_L_Q.T)
-                #ew, ev = np.linalg.eigh(Q_)
-                #ew[ew<1e-6] = 1e-6
-                #Q_ = dot3(ev, np.diag(ew), ev.T)
-                #new_L_Q = np.linalg.cholesky(Q_)
-                #ref = obj_start - step_size/10000. * (np.sum(grad_A_un*grad_A) + np.sum(grad_L_Q_un*grad_L_Q))
-
                 ref = obj_start - step_size/10000. * (np.sum(grad_A_un*grad_A))
-                new_L_Q = L_Q
-                obj = L2_obj((new_At, new_L_Q))
+                obj = L2_obj(new_At, L_Q)
                 tmp_diff = obj - ref
                 step_size *= tau
             At[:] = new_At
-            #L_Q = new_L_Q
 
             # update Q using closed form
             AtB2T = einsum2('tik,tjk->tij', At, B2)
@@ -609,8 +594,8 @@ def em(Y, initparams, fixedparams, ldsregparams, niter=10, Atrue=None, num_objva
             elbo_2 = np.sum(B1 - AtB2T - B2AtT + AtB3AtT, axis=0)
             Q = 1./(ntrials*T) * elbo_2
             L_Q = np.linalg.cholesky(Q)
-            obj = L2_obj((At, L_Q))
 
+            obj = L2_obj(At, L_Q)
             obj_diff = obj_start - obj
             it += 1
 
@@ -735,7 +720,7 @@ if __name__ == "__main__":
     fixedparams = (C, R, mu0)
     ldsregparams = (0., 0.1)
 
-    ret = em(Y, initparams, fixedparams, ldsregparams, niter=20, Atrue=A)
+    ret = em(Y, initparams, fixedparams, ldsregparams, niter=50, Atrue=A)
     A_est = ret['A']
     em_obj_vals = ret['em_obj_vals']
     mus_smooth = ret['mus_smooth']
@@ -758,6 +743,9 @@ if __name__ == "__main__":
             plt.legend()
     plt.tight_layout()
     plt.show()
+
+    plt.figure()
+    plt.plot(em_obj_vals)
 
     #print("running kalman filter tests")
     #ll_loop, mus_filt_loop, sigmas_filt_loop = kalman_filter_loop(Y, A, C, Q, R, mu0, Q0)
