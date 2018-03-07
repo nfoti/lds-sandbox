@@ -318,7 +318,7 @@ def rts_smooth(Y, A, C, Q, R, mu0, Q0):
         sigma_pred = sym(sigma_pred)
 
         L = np.linalg.cholesky(sigma_pred)
-        # res[n] = Y[n,t,:] = np.dot(C, mu_predict[n])
+        # res[n] = Y[n,t,:] - np.dot(C, mu_predict[n])
         # the transpose works b/c of how dot broadcasts
         res = Y[...,t,:] - np.dot(mu_predict[:,t,:], C.T)
         v = solve_triangular(L, res, lower=True)
@@ -600,6 +600,7 @@ def em(Y, initparams, fixedparams, ldsregparams, niter=10, Atrue=None, num_objva
             At[:] = new_At
             #L_Q = new_L_Q
 
+            # update Q using closed form
             AtB2T = einsum2('tik,tjk->tij', At, B2)
             B2AtT = einsum2('tik,tjk->tij', B2, At)
             # einsum2 is faster
@@ -609,7 +610,6 @@ def em(Y, initparams, fixedparams, ldsregparams, niter=10, Atrue=None, num_objva
             elbo_2 = np.sum(B1 - AtB2T - B2AtT + AtB3AtT, axis=0)
             Q = 1./(ntrials*T) * elbo_2
             L_Q = np.linalg.cholesky(Q)
-
             obj = L2_obj((At, L_Q))
 
             obj_diff = obj_start - obj
