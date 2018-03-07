@@ -283,7 +283,7 @@ def rts_smooth_loop(Y, A, C, Q, R, mu0, Q0):
             # {mus,sigmas}_smooth[n,t] contain the filtered estimates so we're
             # overwriting them on purpose
             mus_smooth[n,t,:] = mus_smooth[n,t,:] + np.dot(T_(Gt_T), mus_smooth[n,t+1,:] - mu_predict[t+1,:])
-            sigmas_smooth[n,t,:,:] = sigmas_smooth[n,t,:,:] + dot3(T_(Gt_T), sigmas_smooth[n,t+1,:,:] - temp_nn, Gt_T)
+            sigmas_smooth[n,t,:,:] = sigmas_smooth[n,t,:,:] + dot3(T_(Gt_T), sigmas_smooth[n,t+1,:,:] - sigma_predict[:,t+1,:,:], Gt_T)
             sigmas_smooth_tnt[n,t,:,:] = np.dot(sigmas_smooth[n,t+1,:,:], Gt_T)
 
     return ll, mus_smooth, sigmas_smooth, sigmas_smooth_tnt
@@ -362,8 +362,7 @@ def rts_smooth(Y, A, C, Q, R, mu0, Q0):
         #mus_smooth[n,t,:] = mus_smooth[n,t,:] + np.dot(T_(Gt_T), mus_smooth[n,t+1,:] - mu_predict[t+1,:])
         mus_smooth[:,t,:] = mus_smooth[:,t,:] + einsum2('nki,nk->ni', Gt_T, mus_smooth[:,t+1,:] - mu_predict[:,t+1,:])
 
-        #sigmas_smooth[n,t,:,:] = sigmas_smooth[n,t,:,:] + dot3(T_(Gt_T), sigmas_smooth[n,t+1,:,:] - temp_nn, Gt_T)
-        tmp = einsum2('nki,nkj->nij', Gt_T, sigmas_smooth[:,t+1,:,:] - temp_nn)
+        tmp = einsum2('nki,nkj->nij', Gt_T, sigmas_smooth[:,t+1,:,:] - sigma_predict[:,t+1,:,:])
         tmp = einsum2('nik,nkj->nij', tmp, Gt_T)
         sigmas_smooth[:,t,:,:] = sym(sigmas_smooth[:,t,:,:] + tmp)
 
@@ -724,8 +723,8 @@ if __name__ == "__main__":
     A_init = np.array([rand_stable(d, s=0.7) for _ in range(T)])  # np.random.randn(*A.shape)
     # A_init = A.copy()
 
-    # Q_init = Q.copy()
-    Q_init = rand_psd(d, minew=0.05, maxew=0.1)
+    #Q_init = Q.copy()
+    Q_init = rand_psd(d)
     #Q_init = np.eye(d)
 
     # Q0_init = Q0.copy()
