@@ -463,6 +463,8 @@ def em(Y, initparams, fixedparams, ldsregparams, niter=10, Atrue=None, num_objva
     lam0, lam1 = ldsregparams
     
     em_obj_list = np.zeros(niter)
+    best_em_obj = np.finfo('float').max
+    bestparams = (A.copy(), Q.copy(), Q0.copy())
 
     At = A[:-1]
 
@@ -515,6 +517,11 @@ def em(Y, initparams, fixedparams, ldsregparams, niter=10, Atrue=None, num_objva
         em_obj, L1, L2, L3, penalty = em_objective(Y, it_params, it_fixedparams, ldsregparams,
                               mus_smooth, sigmas_smooth, sigmas_smooth_tnt)
         em_obj_list[em_it] = em_obj
+
+        # check for updated best iterate
+        if em_obj < best_em_obj:
+            best_em_obj = em_obj
+            bestparams = (A.copy(), Q.copy(), Q0.copy())
 
         # check for convergence
         if em_it >= num_objvals:
@@ -646,6 +653,9 @@ def em(Y, initparams, fixedparams, ldsregparams, niter=10, Atrue=None, num_objva
         #axes_inner[1].scatter(0, At_obj((At, L_Q)), color='blue')
         #axes_inner[1].scatter(-step_size, At_obj((At, L_Q - step_size*grad_L_Q)), color='red')
         #fig_inner.canvas.draw()
+
+    # retrieve best parameters
+    A, Q, Q0 =  bestparams
 
     print('final smoothing with estimated parameters')
     _, mus_smooth, sigmas_smooth, sigmas_smooth_tnt = rts_smooth(Y, A, C, Q, R, mu0, Q0)
