@@ -1,2 +1,3 @@
 
-git+git://github.com/mattjj/autograd_linalg.git#egg=master
+    pip install --src deps -e git+ssh://git@github.com/nfoti/autograd_linalg.git#egg=autograd_linalg
+    pip install --src deps -e git+ssh://git@github.com/jackkamm/einsum2.git#egg=einsum2
