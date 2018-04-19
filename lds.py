@@ -20,6 +20,8 @@ except ImportError:
           "consider installing einsum2 package")
     from numpy import einsum as einsum2
 
+from autograd.scipy.linalg import block_diag
+
 
 def T_(X):
     return np.swapaxes(X, -1, -2)
@@ -62,6 +64,26 @@ def rand_stable(d, s=0.9):
     A = np.random.randn(d, d)
     A *= s / np.max(np.abs(np.linalg.eigvals(A)))
     return A
+
+
+def component_matrix(As, nlags):
+    """ compute component form of latent VAR process
+        
+        [A_1 A_2 ... A_p]
+        [ I   0  ...  0 ]
+        [ 0   I   0   0 ]
+        [ 0 ...   I   0 ]
+
+    """
+
+    d = As.shape[0]
+    res = np.zeros((d*nlags, d*nlags))
+    res[:d] = As
+    
+    if nlags > 1:
+        res[np.arange(d,d*nlags), np.arange(d*nlags-d)] = 1
+
+    return res
 
 
 def lds_simulate_loop(T, A, C, Q, R, mu0, Q0, ntrials):
@@ -374,6 +396,176 @@ def rts_smooth(Y, A, C, Q, R, mu0, Q0):
     return ll, mus_smooth, sigmas_smooth, sigmas_smooth_tnt
 
 
+def rts_fast_smooth(Y, A, C, Q, R, mu0, Q0, compute_lag1_cov=False):
+    """ RTS smoother that broadcasts over the first dimension.
+        Handles multiple lag dependence using component form.
+
+        Note: This function doesn't handle control inputs (yet).
+
+        Y : ndarray, shape=(N, T, D)
+          Observations
+
+        A : ndarray, shape=(T, D*nlag, D*nlag)
+          Time-varying dynamics matrices
+
+        C : ndarray, shape=(p, D)
+          Observation matrix
+
+        mu0: ndarray, shape=(D,)
+          mean of initial state variable
+
+        Q0 : ndarray, shape=(D, D)
+          Covariance of initial state variable
+
+        Q : ndarray, shape=(D, D)
+          Covariance of latent states
+
+        R : ndarray, shape=(D, D)
+          Covariance of observations
+    """
+
+    N, T, _ = Y.shape
+    _, D, Dnlags = A.shape
+    nlags = Dnlags // D
+    AA = np.stack([component_matrix(At, nlags) for At in A], axis=0)
+
+    L_R = np.linalg.cholesky(R)
+
+    p = C.shape[0]
+    CC = hs([C, np.zeros((p, D*(nlags-1)))])
+    tmp = solve_triangular(L_R, CC, lower=True)
+    Rinv_CC = solve_triangular(L_R, tmp, trans='T', lower=True)
+    CCT_Rinv_CC = einsum2('ki,kj->ij', CC, Rinv_CC)
+
+    QQ = np.zeros((T, Dnlags, Dnlags))
+    QQ[:,:D,:D] = Q
+
+    QQ0 = block_diag(*[Q0 for _ in range(nlags)])
+
+    mu_predict = np.empty((N, T+1, Dnlags))
+    sigma_predict = np.empty((N, T+1, Dnlags, Dnlags))
+
+    mus_smooth = np.empty((N, T, Dnlags))
+    sigmas_smooth = np.empty((N, T, Dnlags, Dnlags))
+
+    if compute_lag1_cov:
+        sigmas_smooth_tnt = np.empty((N, T-1, Dnlags, Dnlags))
+    else:
+        sigmas_smooth_tnt = None
+
+    ll = 0.
+    mu_predict[:,0,:] = np.tile(mu0, nlags)
+    sigma_predict[:,0,:,:] = QQ0.copy()
+
+    I_tiled = np.tile(np.eye(D), (N, 1, 1))
+
+    for t in range(T):
+
+        # condition
+        # sigma_x = dot3(C, sigma_predict, C.T) + R
+        tmp1 = einsum2('ik,nkj->nij', CC, sigma_predict[:,t,:,:])
+
+        res = Y[...,t,:] - einsum2('ik,nk->ni', CC, mu_predict[...,t,:])
+
+        # Rinv * res
+        tmp2 = solve_triangular(L_R, res.T, lower=True).T
+        tmp2 = solve_triangular(L_R, tmp2.T, trans='T', lower=True).T
+
+        # C^T Rinv * res
+        tmp3 = einsum2('ki,nk->ni', Rinv_CC, res)
+
+        # (Pinv + C^T Rinv C)_inv * tmp3
+        # Pinv = np.linalg.inv(sigma_predict[:,t,:,:])
+        L_P = np.linalg.cholesky(sigma_predict[:,t,:,:])
+        tmp = solve_triangular(L_P, I_tiled, lower=True)
+        Pinv = solve_triangular(L_P, tmp, trans='T', lower=True)
+        tmp4 = sym(Pinv + CCT_Rinv_CC)
+        L_tmp4 = np.linalg.cholesky(tmp4)
+        tmp3 = solve_triangular(L_tmp4, tmp3, lower=True)
+        tmp3 = solve_triangular(L_tmp4, tmp3, trans='T', lower=True)
+        
+        # Rinv C * tmp3
+        tmp3 = einsum2('ik,nk->ni', Rinv_CC, tmp3)
+
+        # add the two Woodbury * res terms together
+        tmp = tmp2 - tmp3
+
+        # for debugging (below)
+        sigma_pred = einsum2('nik,jk->nij', tmp1, CC) + R
+        sigma_pred = sym(sigma_pred)
+        L = np.linalg.cholesky(sigma_pred)
+        v = solve_triangular(L, res, lower=True)
+        v = solve_triangular(L, v, lower=True, trans='T')
+        assert np.allclose(v, tmp), 'v and tmp do not match'
+        # for debugging (above)
+        
+        # # log-likelihood over all trials
+        # # TODO: recompute with new tmp variables
+        # ll += (-0.5*np.sum(v*v)
+        #        - 2.*np.sum(np.log(np.diagonal(L, axis1=1, axis2=2)))
+        #        - p/2.*np.log(2.*np.pi))
+
+        mus_smooth[:,t,:] = mu_predict[:,t,:] + einsum2('nki,nk->ni', tmp1, tmp)
+
+        # tmp2 = L^{-1}*C*sigma_predict
+        # tmp2 = solve_triangular(L, tmp1, lower=True)
+
+        # Rinv * tmp1
+        tmp2 = solve_triangular(L_R, tmp1.T, lower=True).T
+        tmp2 = solve_triangular(L_R, tmp2.T, trans='T', lower=True).T
+
+        # C^T Rinv * tmp1
+        tmp3 = einsum2('ki,nkj->nij', Rinv_CC, tmp1)
+
+        # (Pinv + C^T Rinv C)_inv * tmp3
+        tmp3 = solve_triangular(L_tmp4, tmp3, lower=True)
+        tmp3 = solve_triangular(L_tmp4, tmp3, trans='T', lower=True)
+        
+        # Rinv C * tmp3
+        tmp3 = einsum2('ik,nkj->nij', Rinv_CC, tmp3)
+
+        # add the two Woodbury * tmp1 terms together, left-multiply by tmp1
+        tmp = einsum2('nki,nkj->nij', tmp1, tmp2 - tmp3)
+
+        sigmas_smooth[:,t,:,:] = sym(sigma_predict[:,t,:,:] - tmp)
+
+        # prediction
+        #mu_predict = np.dot(A[t], mus_smooth[t])
+        mu_predict[:,t+1,:] = einsum2('ik,nk->ni', AA[t], mus_smooth[:,t,:])
+
+        #sigma_predict = dot3(A[t], sigmas_smooth[t], A[t].T) + Q[t]
+        tmp = einsum2('ik,nkl->nil', AA[t], sigmas_smooth[:,t,:,:])
+        sigma_predict[:,t+1,:,:] = sym(einsum2('nil,jl->nij', tmp, AA[t]) + QQ[t])
+            
+    for t in range(T-2, -1, -1):
+        
+        # these names are stolen from mattjj and slinderman
+        #temp_nn = np.dot(A[t], sigmas_smooth[n,t,:,:])
+        temp_nn = einsum2('ik,nkj->nij', AA[t], sigmas_smooth[:,t,:,:])
+
+        L = np.linalg.cholesky(sigma_predict[:,t+1,:,:])
+        v = solve_triangular(L, temp_nn, lower=True)
+        # Look in Saarka for dfn of Gt_T
+        Gt_T = solve_triangular(L, v, trans='T', lower=True)
+
+        # {mus,sigmas}_smooth[n,t] contain the filtered estimates so we're
+        # overwriting them on purpose
+        #mus_smooth[n,t,:] = mus_smooth[n,t,:] + np.dot(T_(Gt_T), mus_smooth[n,t+1,:] - mu_predict[t+1,:])
+        mus_smooth[:,t,:] = mus_smooth[:,t,:] + einsum2('nki,nk->ni', Gt_T, mus_smooth[:,t+1,:] - mu_predict[:,t+1,:])
+
+        #sigmas_smooth[n,t,:,:] = sigmas_smooth[n,t,:,:] + dot3(T_(Gt_T), sigmas_smooth[n,t+1,:,:] - temp_nn, Gt_T)
+        tmp = einsum2('nki,nkj->nij', Gt_T, sigmas_smooth[:,t+1,:,:] - sigma_predict[:,t+1,:,:])
+        tmp = einsum2('nik,nkj->nij', tmp, Gt_T)
+        sigmas_smooth[:,t,:,:] = sym(sigmas_smooth[:,t,:,:] + tmp)
+
+        if compute_lag1_cov:
+            # This matrix is NOT symmetric, so don't symmetrize!
+            #sigmas_smooth_tnt[n,t,:,:] = np.dot(sigmas_smooth[n,t+1,:,:], Gt_T)
+            sigmas_smooth_tnt[:,t,:,:] = einsum2('nik,nkj->nij', sigmas_smooth[:,t+1,:,:], Gt_T)
+
+    return ll, mus_smooth, sigmas_smooth, sigmas_smooth_tnt
+
+
 def em_objective(Y, params, fixedparams, ldsregparams,
                  mus_smooth, sigmas_smooth, sigmas_tnt_smooth):
 
@@ -658,15 +850,15 @@ if __name__ == "__main__":
     np.random.seed(42)
 
     T = 165
-    ntrials = 200
+    ntrials = 10
     #theta = 1.2
     #A = np.array([[np.cos(theta), np.sin(theta)], [-np.sin(theta), np.cos(theta)]])
 
     # the same for convenience. constructing reasonable C from small to large
     # dimensions is tricky
 
-    d = 4
-    D = 10
+    d = 10
+    D = 120
 
     #d = 05
     #D = 6
@@ -720,32 +912,36 @@ if __name__ == "__main__":
     fixedparams = (C, R, mu0)
     ldsregparams = (0., 0.1)
 
-    ret = em(Y, initparams, fixedparams, ldsregparams, niter=50, Atrue=A)
-    A_est = ret['A']
-    em_obj_vals = ret['em_obj_vals']
-    mus_smooth = ret['mus_smooth']
-    Q_est = np.dot(ret['L_Q'], ret['L_Q'].T)
-    Q0_est = np.dot(ret['L_Q0'], ret['L_Q0'].T)
+    _, mus_smooth, sigmas_smooth, sigmas_smooth_tnt = rts_smooth(Y, A, C, Q, R, mu0, Q0)
+    _, mus_smooth_fast, sigmas_smooth_fast, sigmas_smooth_tnt_fast = rts_fast_smooth(Y, A, C, Q, R, mu0, Q0)
 
-    mus_smooth = ret['mus_smooth']
-    _, mus_smooth_true, _, _ = rts_smooth(Y, A, C, Q, R, mu0, Q0)
 
-    plt.figure()
-    for i in range(d):
-        mean_true = np.mean(x[:, :, i], axis=0)
-        mean_smoothed = np.mean(mus_smooth[:, :, i], axis=0)
-        mean_smoothed_true = np.mean(mus_smooth_true[:, :, i], axis=0)
-        plt.subplot(d, 1, i + 1)
-        plt.plot(mean_true, color='green', label='true (mean over trials)')
-        plt.plot(mean_smoothed, color='red', label=r'smoothed with $A_{est}$')
-        plt.plot(mean_smoothed_true, color='blue', label=r'smoothed with $A_{true}$')
-        if i == 0:
-            plt.legend()
-    plt.tight_layout()
-    plt.show()
+    # ret = em(Y, initparams, fixedparams, ldsregparams, niter=50, Atrue=A)
+    # A_est = ret['A']
+    # em_obj_vals = ret['em_obj_vals']
+    # mus_smooth = ret['mus_smooth']
+    # Q_est = np.dot(ret['L_Q'], ret['L_Q'].T)
+    # Q0_est = np.dot(ret['L_Q0'], ret['L_Q0'].T)
 
-    plt.figure()
-    plt.plot(em_obj_vals)
+    # mus_smooth = ret['mus_smooth']
+    # _, mus_smooth_true, _, _ = rts_smooth(Y, A, C, Q, R, mu0, Q0)
+
+    # plt.figure()
+    # for i in range(d):
+    #     mean_true = np.mean(x[:, :, i], axis=0)
+    #     mean_smoothed = np.mean(mus_smooth[:, :, i], axis=0)
+    #     mean_smoothed_true = np.mean(mus_smooth_true[:, :, i], axis=0)
+    #     plt.subplot(d, 1, i + 1)
+    #     plt.plot(mean_true, color='green', label='true (mean over trials)')
+    #     plt.plot(mean_smoothed, color='red', label=r'smoothed with $A_{est}$')
+    #     plt.plot(mean_smoothed_true, color='blue', label=r'smoothed with $A_{true}$')
+    #     if i == 0:
+    #         plt.legend()
+    # plt.tight_layout()
+    # plt.show()
+
+    # plt.figure()
+    # plt.plot(em_obj_vals)
 
     #print("running kalman filter tests")
     #ll_loop, mus_filt_loop, sigmas_filt_loop = kalman_filter_loop(Y, A, C, Q, R, mu0, Q0)
