@@ -396,7 +396,7 @@ def rts_smooth(Y, A, C, Q, R, mu0, Q0):
     return ll, mus_smooth, sigmas_smooth, sigmas_smooth_tnt
 
 
-def rts_fast_smooth(Y, A, C, Q, R, mu0, Q0, compute_lag1_cov=False):
+def rts_smooth_fast(Y, A, C, Q, R, mu0, Q0, compute_lag1_cov=False):
     """ RTS smoother that broadcasts over the first dimension.
         Handles multiple lag dependence using component form.
 
@@ -437,6 +437,10 @@ def rts_fast_smooth(Y, A, C, Q, R, mu0, Q0, compute_lag1_cov=False):
     Rinv_CC = solve_triangular(L_R, tmp, trans='T', lower=True)
     CCT_Rinv_CC = einsum2('ki,kj->ij', CC, Rinv_CC)
 
+    # tile L_R across number of trials so solve_triangular
+    # can broadcast over trials properly
+    L_R = np.tile(L_R, (N, 1, 1))
+
     QQ = np.zeros((T, Dnlags, Dnlags))
     QQ[:,:D,:D] = Q
 
@@ -468,8 +472,8 @@ def rts_fast_smooth(Y, A, C, Q, R, mu0, Q0, compute_lag1_cov=False):
         res = Y[...,t,:] - einsum2('ik,nk->ni', CC, mu_predict[...,t,:])
 
         # Rinv * res
-        tmp2 = solve_triangular(L_R, res.T, lower=True).T
-        tmp2 = solve_triangular(L_R, tmp2.T, trans='T', lower=True).T
+        tmp2 = solve_triangular(L_R, res, lower=True)
+        tmp2 = solve_triangular(L_R, tmp2, trans='T', lower=True)
 
         # C^T Rinv * res
         tmp3 = einsum2('ki,nk->ni', Rinv_CC, res)
@@ -511,8 +515,8 @@ def rts_fast_smooth(Y, A, C, Q, R, mu0, Q0, compute_lag1_cov=False):
         # tmp2 = solve_triangular(L, tmp1, lower=True)
 
         # Rinv * tmp1
-        tmp2 = solve_triangular(L_R, tmp1.T, lower=True).T
-        tmp2 = solve_triangular(L_R, tmp2.T, trans='T', lower=True).T
+        tmp2 = solve_triangular(L_R, tmp1, lower=True)
+        tmp2 = solve_triangular(L_R, tmp2, trans='T', lower=True)
 
         # C^T Rinv * tmp1
         tmp3 = einsum2('ki,nkj->nij', Rinv_CC, tmp1)
@@ -850,7 +854,7 @@ if __name__ == "__main__":
     np.random.seed(42)
 
     T = 165
-    ntrials = 10
+    ntrials = 20
     #theta = 1.2
     #A = np.array([[np.cos(theta), np.sin(theta)], [-np.sin(theta), np.cos(theta)]])
 
@@ -912,9 +916,13 @@ if __name__ == "__main__":
     fixedparams = (C, R, mu0)
     ldsregparams = (0., 0.1)
 
-    _, mus_smooth, sigmas_smooth, sigmas_smooth_tnt = rts_smooth(Y, A, C, Q, R, mu0, Q0)
-    _, mus_smooth_fast, sigmas_smooth_fast, sigmas_smooth_tnt_fast = rts_fast_smooth(Y, A, C, Q, R, mu0, Q0)
-
+    _, mus_smooth, sigmas_smooth, sigmas_smooth_tnt = \
+            rts_smooth(Y, A, C, Q, R, mu0, Q0)
+    _, mus_smooth_fast, sigmas_smooth_fast, sigmas_smooth_tnt_fast = \
+            rts_smooth_fast(Y, A, C, Q, R, mu0, Q0, compute_lag1_cov=True)
+    assert np.allclose(mus_smooth, mus_smooth_fast), "mus don't match"
+    assert np.allclose(sigmas_smooth, sigmas_smooth_fast), "sigmas don't match"
+    assert np.allclose(sigmas_smooth_tnt, sigmas_smooth_tnt_fast), "sigmas_tnt don't match"
 
     # ret = em(Y, initparams, fixedparams, ldsregparams, niter=50, Atrue=A)
     # A_est = ret['A']
