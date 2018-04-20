@@ -493,15 +493,6 @@ def rts_smooth_fast(Y, A, C, Q, R, mu0, Q0, compute_lag1_cov=False):
 
         # add the two Woodbury * res terms together
         tmp = tmp2 - tmp3
-
-        # for debugging (below)
-        sigma_pred = einsum2('nik,jk->nij', tmp1, CC) + R
-        sigma_pred = sym(sigma_pred)
-        L = np.linalg.cholesky(sigma_pred)
-        v = solve_triangular(L, res, lower=True)
-        v = solve_triangular(L, v, lower=True, trans='T')
-        assert np.allclose(v, tmp), 'v and tmp do not match'
-        # for debugging (above)
         
         # # log-likelihood over all trials
         # # TODO: recompute with new tmp variables
