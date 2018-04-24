@@ -1,0 +1,14 @@
+name: lds-sandbox
+channels:
+- defaults
+dependencies:
+- python=3
+- cython
+- ipython
+- matplotlib
+- mkl
+- numpy
+- scipy
+- pip
+- pip:
+  - autograd
