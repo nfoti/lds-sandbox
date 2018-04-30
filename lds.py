@@ -24,20 +24,49 @@ from autograd.scipy.linalg import block_diag
 
 
 def T_(X):
+    """
+        X : some (2+)D matrix
+
+        Swaps the last and second to last axis. e.g. A_{abcd...xyz} -> A_{abcd...xzy}. 
+        If the matrix is 2D this is the transpose (hence the name :O). Well what happens if you
+        are 2+ dimensions but first few dimension are like time steps or trial #'s? last 2 are the info
+        you actually care about
+
+        then transposes all 2D matricies across time/trial #!
+    """
     return np.swapaxes(X, -1, -2)
 
+
 def sym(X):
+    """
+        X : a square matrix
+        returns a symmetric matrix
+    """
     return 0.5*(X + T_(X))
 
+
 def dot3(A, B, C):
+    """
+        A, B, C: all matricies (or scalars) that can be multiplled like ABC
+        returns ABC where A, B, C are matricies/scalars
+    """
     return np.dot(A, np.dot(B, C))
+
 
 hs = lambda *args: np.concatenate(*args, axis=-1)
 vs = lambda *args: np.concatenate(*args, axis=-2)
 square = lambda X: np.dot(X, T_(X))
 # rand_psd = lambda n: square(np.random.randn(n, n))
 
+
 def rand_psd(n, minew=0.1, maxew=1.):
+    """
+        TODO : halp, what is this
+
+        n : the dimensions of the random positive semi-definite matrix to return
+        returns a positive semidefinite matrix that is presumbly random :O
+    """
+
     X = np.random.randn(n,n)
     S = np.dot(T_(X), X)
     S = sym(S)
@@ -50,7 +79,14 @@ def rand_psd(n, minew=0.1, maxew=1.):
 
 
 def _ensure_ndim(X, T, ndim):
+    """
+        TODO
+    """
     from numpy.lib.stride_tricks import as_strided as ast
+
+    # essentially ensures underlying representation in memory of array
+    # making copy if requried -> c-like contiguous rowiest continuity
+    # doubles etc.
     X = np.require(X, dtype=np.float64, requirements='C')
     assert ndim-1 <= X.ndim <= ndim
     if X.ndim == ndim:
@@ -61,6 +97,9 @@ def _ensure_ndim(X, T, ndim):
 
 
 def rand_stable(d, s=0.9):
+    """
+        TODO
+    """
     A = np.random.randn(d, d)
     A *= s / np.max(np.abs(np.linalg.eigvals(A)))
     return A
@@ -73,7 +112,6 @@ def component_matrix(As, nlags):
         [ I   0  ...  0 ]
         [ 0   I   0   0 ]
         [ 0 ...   I   0 ]
-
     """
 
     d = As.shape[0]
@@ -87,14 +125,45 @@ def component_matrix(As, nlags):
 
 
 def lds_simulate_loop(T, A, C, Q, R, mu0, Q0, ntrials):
-    # write version that broadcasts over trials at some point
+    """ Simulates LDS with the following parameters. duh!
+        Note: This function doesn't handle control inputs (yet).
 
+        T : number of time steps per trial
+
+        A : ndarray, shape=(T, d, d)
+          State matrix. 
+        
+        C : ndarray, shape=(D, d)
+          Observation matrix. 
+
+        mu0: ndarray, shape=(d,)
+          mean of initial state variable
+
+        Q0 : ndarray, shape=(d, d)
+          Covariance of initial state variable
+
+        Q : ndarray, shape=(T, d, d)
+          Covariance of latent states
+        
+        R : ndarray, shape=(T, D, D)
+          Covariance of observations
+
+        returns (x, y) where and x and y contain p(x, y)
+    """
+    # write version that broadcasts over trials at some point
+    # d is the number of states, D is the number of outputs
     d = A.shape[1]
     D = C.shape[0]
 
+    # notes does not give 0'd matricies
+    # as if you just malloc'd!
     x = np.empty((ntrials, T, d))
     y = np.empty((ntrials, T, D))
-
+ 
+    # This is a "trick" to generate samples which 
+    # follow the covariance matricies efficiently
+    # http://www.mathworks.com/help/matlab/ref/randn.html 
+    # (under bivariate normal RVs)
     L_R = np.linalg.cholesky(R)
     L_Q = np.linalg.cholesky(Q)
 
@@ -126,7 +195,7 @@ def kalman_filter_loop(Y, A, C, Q, R, mu0, Q0):
         Q : ndarray, shape=(T, D, D)
           Covariance of latent states
         
-        R : ndarray, shape=(T, D, D)
+        R : ndarray, shape=(T, p?, p?)
           Covariance of observations
 
         mu0: ndarray, shape=(D,)
@@ -140,9 +209,11 @@ def kalman_filter_loop(Y, A, C, Q, R, mu0, Q0):
     T, D, _ = A.shape
     p = C.shape[0]
 
+    # result of prediction step, that is p(z_t | y_1:t-1)
     mu_predict = np.stack([mu0 for _ in range(N)], axis=0)
     sigma_predict = np.stack([Q0 for _ in range(N)], axis=0)
 
+    # result of measurmeent step, that is p(z_t | y_1:t)
     mus_filt = np.zeros((N, T, D))
     sigmas_filt = np.zeros((N, T, D, D))
 
@@ -151,9 +222,13 @@ def kalman_filter_loop(Y, A, C, Q, R, mu0, Q0):
     for n in range(N):
         for t in range(T):
 
-            # condition
+            # condition (measurement step)
             tmp1 = np.dot(C, sigma_predict[n])
-            sigma_pred = np.dot(tmp1, C.T) + R
+
+            # corresponds to S_t matrix in murphy (eq 18.35)
+            # S_t = cov [residuals for output pred. | past output pred.]
+            sigma_pred = np.dot(tmp1, C.T) + R 
+
             L = np.linalg.cholesky(sigma_pred)
             v = solve_triangular(L, Y[n,t,:] - np.dot(C, mu_predict[n]), lower=True)
 
@@ -161,6 +236,7 @@ def kalman_filter_loop(Y, A, C, Q, R, mu0, Q0):
             ll += -0.5*np.dot(v,v) - 2.*np.sum(np.log(np.diag(L))) \
                   - 0.5*np.log(2.*np.pi)
 
+            # note: solve_triangular(L, v, trans='T', lower=True) finds x for S_t x = residual!
             mus_filt[n,t,:] = mu_predict[n] + np.dot(tmp1.T, solve_triangular(L, v, trans='T', lower=True))
 
             tmp2 = solve_triangular(L, tmp1, lower=True)
