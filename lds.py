@@ -230,13 +230,22 @@ def kalman_filter_loop(Y, A, C, Q, R, mu0, Q0):
             sigma_pred = np.dot(tmp1, C.T) + R 
 
             L = np.linalg.cholesky(sigma_pred)
+
+            # We want S_t^-1 r_t so solve for x in S_t^-1 x = r_t
+            # Use Cholesky to get L L' x = r_t
+            # solve for v = L' x (group it up)
             v = solve_triangular(L, Y[n,t,:] - np.dot(C, mu_predict[n]), lower=True)
 
             # log-likelihood over all trials
             ll += -0.5*np.dot(v,v) - 2.*np.sum(np.log(np.diag(L))) \
                   - 0.5*np.log(2.*np.pi)
 
-            # note: solve_triangular(L, v, trans='T', lower=True) finds x for S_t x = residual!
+            # solve_triangular(L, v, trans='T', lower=True) solves for the original x in L L' x = r_t
+            # by solving the eq. v = L' x (group it up). Now we have x = S_t^-1 r_t
+            # we note that we want (sigma_pred) (C') S_t^-1 r_t
+            # tmp1 = C (sigma_pred) so tmp1' = (sigma_pred)' C' = (sigma_pred) C'
+            # because covaraince matricies are symmetric! then boom we have what we want and it's just
+            # eq. 18.31 in Murphy
             mus_filt[n,t,:] = mu_predict[n] + np.dot(tmp1.T, solve_triangular(L, v, trans='T', lower=True))
 
             tmp2 = solve_triangular(L, tmp1, lower=True)
