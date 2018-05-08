@@ -300,6 +300,41 @@ def kalman_filter(Y, A, C, Q, R, mu0, Q0):
     ll = 0.
 
     for t in range(T):
+        '''
+           # condition (measurement step)
+            tmp1 = np.dot(C, sigma_predict[n])
+
+            # corresponds to S_t matrix in murphy (eq 18.35)
+            # S_t = cov [residuals for output pred. | past output pred.]
+            sigma_pred = np.dot(tmp1, C.T) + R 
+
+            L = np.linalg.cholesky(sigma_pred)
+
+            # We want S_t^-1 r_t so solve for x in S_t^-1 x = r_t
+            # Use Cholesky to get L L' x = r_t
+            # solve for v = L' x (group it up)
+            v = solve_triangular(L, Y[n,t,:] - np.dot(C, mu_predict[n]), lower=True)
+
+            # log-likelihood over all trials
+            ll += -0.5*np.dot(v,v) - 2.*np.sum(np.log(np.diag(L))) \
+                  - 0.5*np.log(2.*np.pi)
+
+            # solve_triangular(L, v, trans='T', lower=True) solves for the original x in L L' x = r_t
+            # by solving the eq. v = L' x (group it up). Now we have x = S_t^-1 r_t
+            # we note that we want (sigma_pred) (C') S_t^-1 r_t
+            # tmp1 = C (sigma_pred) so tmp1' = (sigma_pred)' C' = (sigma_pred) C'
+            # because covaraince matricies are symmetric! then boom we have what we want and it's just
+            # eq. 18.31 in Murphy
+            mus_filt[n,t,:] = mu_predict[n] + np.dot(tmp1.T, solve_triangular(L, v, trans='T', lower=True))
+
+            tmp2 = solve_triangular(L, tmp1, lower=True)
+            sigmas_filt[n,t,:,:] = sigma_predict[n] - np.dot(tmp2.T, tmp2)
+
+            # prediction
+            mu_predict[n] = np.dot(A[t], mus_filt[n,t,:])
+            sigma_predict[n] = dot3(A[t], sigmas_filt[n,t,:,:], A[t].T) + Q[t]
+
+        '''
 
         # condition
         # dot3(C, sigma_predict, C.T) + R
@@ -357,6 +392,7 @@ def rts_smooth_loop(Y, A, C, Q, R, mu0, Q0):
         mu_predict[0] = mu0
         sigma_predict[0] = Q0
 
+        # just run the forwardpass like before
         for t in range(T):
 
             # condition
@@ -377,6 +413,7 @@ def rts_smooth_loop(Y, A, C, Q, R, mu0, Q0):
             # prediction
             mu_predict[t+1] = np.dot(A[t], mus_smooth[n,t,:])
             sigma_predict[t+1] = dot3(A[t], sigmas_smooth[n,t,:,:], A[t].T) + Q[t]
+
 
         for t in range(T-2, -1, -1):
             
@@ -716,12 +753,22 @@ def em_objective(Y, params, fixedparams, ldsregparams,
 
 
 def em(Y, initparams, fixedparams, ldsregparams, niter=10, Atrue=None, num_objvals=5, tol=1e-6):
-
     A_init, Q_init, Q0_init = initparams
     A = A_init.copy()
     Q = Q_init.copy()
     Q0 = Q0_init.copy()
+    
+    '''
+    High level overview
+        Estimate states using A, Q, C, R using RTS for inference on observations Y
+        Learn A, Q, C, R from labels
+            argmin(A_t) [ z_t - Az_{t - 1})^2 ]. 
+                Where z_t probability of being in all states at time t
+            argmin(C_t) [ (Y_t - C{z_t})^2 ].
 
+            We can also estimate Q_t and R_t, the variance of noise through magic :(
+    '''
+    
     L_Q = np.linalg.cholesky(Q)
 
     _, D, Dnlags = A.shape
@@ -753,8 +800,9 @@ def em(Y, initparams, fixedparams, ldsregparams, niter=10, Atrue=None, num_objva
     plt.pause(1./60.)
 
     for em_it in range(niter):
-
         L_Q0 = np.linalg.cholesky(Q0)
+
+        # why repeat this line
         Q = np.dot(L_Q, L_Q.T)
 
         # e-step
