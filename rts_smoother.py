@@ -62,10 +62,9 @@ def kalman_filter_basic(Y, A, C, Q, R, mu0, Q0):
     measure_mu = np.zeros((N, T, D))
     measure_sigma = np.zeros((N, T, D, D))
 
-    predict_mu[0] = mu0
-    predict_sigma[0] = Q0
-
     for n in range(N):
+        predict_mu[n, 0] = mu0
+        predict_sigma[n, 0] = Q0
         for t in range(T):
             # 1 MEASUREMENT STEP
             # 1.1 Gain Matrix

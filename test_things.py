@@ -6,7 +6,7 @@ from rts_smoother import kalman_filter_basic
 np.random.seed(3251997)
 
 if __name__ == '__main__':
-    N = 1
+    N = 10
     T = 500
     D = 10
     p = 5    
