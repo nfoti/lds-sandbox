@@ -30,7 +30,7 @@ def kalman_filter_basic(Y, A, C, Q, R, mu0, Q0):
         
         Note: This function doesn't handle control inputs (yet).
         
-        Y : ndarray, shape=(T, D)
+        Y : ndarray, shape=(N, T, D)
           Observations
 
         A : ndarray, shape=(T, D, D)
@@ -52,66 +52,63 @@ def kalman_filter_basic(Y, A, C, Q, R, mu0, Q0):
           Covariance of observations
     """
     
-    T = Y.shape[0]
+    N = Y.shape[0]
+    T = Y.shape[1]
     D = A.shape[1]
 
-    predict_mu = np.zeros((T + 1, D))
-    predict_sigma = np.zeros((T + 1, D, D))
+    predict_mu = np.zeros((N, T + 1, D))
+    predict_sigma = np.zeros((N, T + 1, D, D))
 
-    measure_mu = np.zeros((T, D))
-    measure_sigma = np.zeros((T, D, D))
+    measure_mu = np.zeros((N, T, D))
+    measure_sigma = np.zeros((N, T, D, D))
 
     predict_mu[0] = mu0
     predict_sigma[0] = Q0
 
-    for t in range(T):
-        # 1 MEASUREMENT STEP
-        # 1.1 Gain Matrix
-        # 1.1.1 Calculate S_t (eq 18.36 in Murphy)
-        S_t = np.dot(C, predict_sigma[t])
-        S_t = np.dot(S_t, C.T) + R
-        #S_t = sym(S_t) # correct for rounding errors?
-        #print('me', S_t)
+    for n in range(N):
+        for t in range(T):
+            # 1 MEASUREMENT STEP
+            # 1.1 Gain Matrix
+            # 1.1.1 Calculate S_t (eq 18.36 in Murphy)
+            S_t = np.dot(C, predict_sigma[n, t])
+            S_t = np.dot(S_t, C.T) + R
+            S_t = sym(S_t) # correct for rounding errors
 
-        # 1.2.3 Calculate gain matrix
-        # main idea: want (sigma) (C)' (S_t)^-1
-        # this is ((S_t)^-1 (C) (sigma))' 
-        # note S_t and sigma are covariance matricies! For S_t see (eq 18.36)
+            # 1.2.3 Calculate gain matrix
+            # main idea: want (sigma) (C)' (S_t)^-1
+            # this is ((S_t)^-1 (C) (sigma))' 
+            # note S_t and sigma are covariance matricies! For S_t see (eq 18.36)
 
-        # we will solve for (S_t)^-1 (C) (sigma) and take the transpose
-        # this let's us do the cool cholesky trick which is #faster
-        
-        # solve the system S_t x = (C)(sigma)
-        C_sigma = np.dot(C, predict_sigma[t])
+            # we will solve for (S_t)^-1 (C) (sigma) and take the transpose
+            # this let's us do the cool cholesky trick which is #faster
+            
+            # solve the system S_t x = (C)(sigma)
+            C_sigma = np.dot(C, predict_sigma[n, t])
 
-        # solve the system L L' x = (C)(sigma), S_t = L L'
-        L = np.linalg.cholesky(S_t)
+            # solve the system L L' x = (C)(sigma), S_t = L L'
+            L = np.linalg.cholesky(S_t)
 
-        # first solve L v = C sigma
-        v = solve_triangular(L, C_sigma, lower=True)
+            # first solve L v = C sigma
+            v = solve_triangular(L, C_sigma, lower=True)
 
-        # then find x = (S_t)^-1 (C) (sigma_predict)!
-        gain_matrix = T_(solve_triangular(L, v, trans='T', lower=True))
+            # then find x = (S_t)^-1 (C) (sigma_predict)!
+            gain_matrix = T_(solve_triangular(L, v, trans='T', lower=True))
 
-        # 1.2 Calculate residuals
-        residual = Y[t] - np.dot(C, predict_mu[t])
+            # 1.2 Calculate residuals
+            residual = Y[n, t] - np.dot(C, predict_mu[n, t])
 
-        # 1.3 Update mu
-        measure_mu[t] = predict_mu[t] + np.dot(gain_matrix, residual) 
+            # 1.3 Update mu
+            measure_mu[n, t] = predict_mu[n, t] + np.dot(gain_matrix, residual) 
 
-        # 1.4 update sigma
-        tmp = np.identity(D) - np.dot(gain_matrix, C)
-        measure_sigma[t] = np.dot(tmp, predict_sigma[t])
+            # 1.4 update sigma
+            tmp = np.identity(D) - np.dot(gain_matrix, C)
+            measure_sigma[n, t] = np.dot(tmp, predict_sigma[n, t])
+            measure_sigma[n, t] = sym(measure_sigma[n, t])
 
-        print ('mu %d:\n' %t, measure_mu[t])
-        print()
-
-        print ('sigma %d:\n' %t, measure_sigma[t])
-        print()
-
-        # 2 PREDICT STEP
-        predict_mu[t + 1] = np.dot(A[t], measure_mu[t])
-        predict_sigma[t + 1] = np.dot(np.dot(A[t], measure_sigma[t]), A[t].T) + Q[t]
+            # 2 PREDICT STEP
+            predict_mu[n, t + 1] = np.dot(A[t], measure_mu[n, t])
+            predict_sigma[n, t + 1] = np.dot(np.dot(A[t], measure_sigma[n, t]), A[t].T) + Q[t]
+            predict_sigma[n, t + 1] = sym(predict_sigma[n, t + 1])
 
     return measure_mu, measure_sigma
 

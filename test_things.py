@@ -16,15 +16,11 @@ if __name__ == '__main__':
     C = np.random.rand(D, D)
     mu0 = np.random.rand(D)
     Q0 = rand_psd(D)
-    Q = rand_psd(D)
+    Q = np.array([rand_psd(D) for i in range(T)])
     R = rand_psd(D)
 
-    ll, mus_filt, sigmas_filt = kalman_filter_loop(Y, A, C, Q, R, mu0, Q0)
+    ll, mus_filt, sigmas_filt = kalman_filter(Y, A, C, Q, R, mu0, Q0)
+    measure_mu, measure_sigma = kalman_filter_basic(Y, A, C, Q, R, mu0, Q0)
 
-    print(0)
-    print(np.reshape(mus_filt, (T, D)) [ 0])
-    print()
-    print(np.reshape(sigmas_filt, (T, D, D))[0])
-    print()
-
-    measure_mu, measure_sigma = kalman_filter_basic(np.reshape(Y, (T, D)), A, C, Q, R, mu0, Q0)
+    print(np.sum(np.abs(measure_mu - mus_filt)))
+    print(np.sum(np.abs(measure_sigma - sigmas_filt)))
