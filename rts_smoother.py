@@ -36,7 +36,7 @@ def kalman_filter_basic(Y, A, C, Q, R, mu0, Q0):
         A : ndarray, shape=(T, D, D)
           Time-varying dynamics matrices
         
-        C : ndarray, shape=(D, D)
+        C : ndarray, shape=(p, D)
           Observation matrix
 
         mu0: ndarray, shape=(D,)
@@ -62,6 +62,7 @@ def kalman_filter_basic(Y, A, C, Q, R, mu0, Q0):
     measure_mu = np.zeros((N, T, D))
     measure_sigma = np.zeros((N, T, D, D))
 
+    ll = 0
     for n in range(N):
         predict_mu[n, 0] = mu0
         predict_sigma[n, 0] = Q0
@@ -109,6 +110,78 @@ def kalman_filter_basic(Y, A, C, Q, R, mu0, Q0):
             predict_sigma[n, t + 1] = np.dot(np.dot(A[t], measure_sigma[n, t]), A[t].T) + Q[t]
             predict_sigma[n, t + 1] = sym(predict_sigma[n, t + 1])
 
-    return measure_mu, measure_sigma
+            sv = solve_triangular(L, residual, lower=True)
+            # log-likelihood over all trials
+            ll += -0.5*np.dot(sv, sv) - 2.*np.sum(np.log(np.diag(L))) \
+                  - 0.5*np.log(2.*np.pi)
 
+    return ll, predict_mu, predict_sigma, measure_mu, measure_sigma
+
+
+def rts_smooth_basic(Y, A, C, Q, R, mu0, Q0):
+    """ Kalman filter that broadcasts over the first dimension.
+        
+        Note: This function doesn't handle control inputs (yet).
+        
+        Y : ndarray, shape=(N, T, D)
+          Observations
+
+        A : ndarray, shape=(T, D, D)
+          Time-varying dynamics matrices
+        
+        C : ndarray, shape=(D, D)
+          Observation matrix
+
+        mu0: ndarray, shape=(D,)
+          mean of initial state variable
+
+        Q0 : ndarray, shape=(D, D)
+          Covariance of initial state variable
+
+        Q : ndarray, shape=(T, D, D)
+          Covariance of latent states
+        
+        R : ndarray, shape=(T, D, D)
+          Covariance of observations
+    """
+    N = Y.shape[0]
+    T = Y.shape[1]
+    D = A.shape[1]
+
+    ll, predict_mu, predict_sigma, measure_mu, measure_sigma = kalman_filter_basic(Y, A, C, Q, R, mu0, Q0)
+
+    smooth_mu = np.zeros((N, T, D))
+    smooth_sigma = np.zeros((N, T, D, D))
+
+    for n in range(N):
+        smooth_mu[n, T - 1] = measure_mu[n, T - 1]
+        smooth_sigma[n, T - 1] = measure_sigma[n, T - 1]
+        for t in range(T - 2, -1, -1): 
+            # 1 CALCULATE THE BACKWARD GAIN MATRIX
+            # want (sigma_filt[t]) (A[t + 1])' (sigma_pred[t + 1])^-1
+            # calculate the transpose (sigma_pred[t + 1])^-1 (A[t + 1])(sigma_filt[t])
+            # using the cholesky trick                  
+            A_sigma = np.dot(A[t], measure_sigma[n, t]) # why is this A_t and not A_{t + 1}
+            
+            # solve the system (sigma_pred[t + 1]) x = A_sigma
+            L = np.linalg.cholesky(predict_sigma[n, t + 1])
+            v = solve_triangular(L, A_sigma, lower=True)
+            gain_matrix = (solve_triangular(L, v, trans='T', lower=True)).T
+
+            # update the smooth'd values
+            smooth_mu[n, t] = measure_mu[n, t] + np.dot(gain_matrix, smooth_mu[n, t + 1] - predict_mu[n, t + 1])
+            smooth_sigma[n, t] = np.dot(gain_matrix, smooth_sigma[n, t + 1] - predict_sigma[n, t + 1])
+            smooth_sigma[n, t] = measure_sigma[n, t] + np.dot(smooth_sigma[n, t], gain_matrix.T)
+
+    return ll, predict_mu, predict_sigma, measure_mu, measure_sigma, smooth_mu, smooth_sigma
+
+
+def lds_em(Y, A0, C0, Q0, R0, iterations = 500, threshold_stop = 0.1):
+    '''
+    Run smoothing on all trials with initial parameters to obtain estimates on state
+
+    Use estimates of state to get new parameters
+    '''
+    pass 
+    
 
