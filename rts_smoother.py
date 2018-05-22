@@ -2,6 +2,9 @@ import numpy as np
 
 from autograd_linalg import solve_triangular
 
+'''
+ToDo: einsum2 everything for #gains
+'''
 
 def sym(X):
     """
@@ -118,7 +121,7 @@ def kalman_filter_basic(Y, A, C, Q, R, mu0, Q0):
     return ll, predict_mu, predict_sigma, measure_mu, measure_sigma
 
 
-def rts_smooth_basic(Y, A, C, Q, R, mu0, Q0):
+def rts_smooth_em(Y, A, C, Q, R, mu0, Q0):
     """ Kalman filter that broadcasts over the first dimension.
         
         Note: This function doesn't handle control inputs (yet).
@@ -152,6 +155,7 @@ def rts_smooth_basic(Y, A, C, Q, R, mu0, Q0):
 
     smooth_mu = np.zeros((N, T, D))
     smooth_sigma = np.zeros((N, T, D, D))
+    backward_gain_matrix = np.zeros((N, T, D, D))
 
     for n in range(N):
         smooth_mu[n, T - 1] = measure_mu[n, T - 1]
@@ -168,20 +172,146 @@ def rts_smooth_basic(Y, A, C, Q, R, mu0, Q0):
             v = solve_triangular(L, A_sigma, lower=True)
             gain_matrix = (solve_triangular(L, v, trans='T', lower=True)).T
 
+            backward_gain_matrix[n, t] = gain_matrix
+
             # update the smooth'd values
             smooth_mu[n, t] = measure_mu[n, t] + np.dot(gain_matrix, smooth_mu[n, t + 1] - predict_mu[n, t + 1])
             smooth_sigma[n, t] = np.dot(gain_matrix, smooth_sigma[n, t + 1] - predict_sigma[n, t + 1])
             smooth_sigma[n, t] = measure_sigma[n, t] + np.dot(smooth_sigma[n, t], gain_matrix.T)
 
-    return ll, predict_mu, predict_sigma, measure_mu, measure_sigma, smooth_mu, smooth_sigma
+    return backward_gain_matrix, ll, predict_mu, predict_sigma, measure_mu, measure_sigma, smooth_mu, smooth_sigma
 
 
-def lds_em(Y, A0, C0, Q0, R0, iterations = 500, threshold_stop = 0.1):
+def rts_smooth_basic(Y, A, C, Q, R, mu0, Q0):
+    return rts_smooth_em(Y, A, C, Q, R, mu0, Q0)[1:]
+
+
+def em_stationary(Y, A, C, Q, R, mu0, Q0, iterations = 50, threshold_stop = 0.001):
     '''
     Run smoothing on all trials with initial parameters to obtain estimates on state
+    C and R are fixed!
 
-    Use estimates of state to get new parameters
+    Only does A for now
     '''
-    pass 
+    N = Y.shape[0]
+    T = Y.shape[1]
+    D = A.shape[1]
+
+    cur_A = A
+    cur_Q = Q
+    cur_m0 = mu0
+    cur_Q0 = Q0
+    ll_old = -100000
+
+    for i in range(50):
+        # the e-step for all time steps
+        params = rts_smooth_em(Y, cur_A, C, cur_Q, R, cur_m0, cur_Q0)
+        gain_matrix, ll, _, _, _, _, smooth_mu, smooth_sigma = params
+
+        # first calculate the beginning stuff
+        cur_m0 = np.mean(smooth_mu[:, 0], axis = 0)
+        cur_Q0 = np.mean(smooth_sigma[:, 0], axis = 0) + np.dot(cur_m0, cur_m0.T)     
+
+        # M step: use bishop's reference eq 13.110 and on
+        for t in range(1, T):
+            # look at eq 13.113 in bishop. Look at eq 13.104 - 13.107 for how to compute these efficiently
+            # these are used in the update of A
+            state_two_slice = np.zeros((D, D)) # sum of E[z_n z_{n-1}']   
+            state_state_squared = np.zeros((D, D)) # sum of E[z_{n-1} z_{n-1}']  # this is psd!   
+
+            # to do, this is just state_state_squared - one time step + one time step   
+            state_state_squared_ahead = np.zeros((D, D)) # sum of E[z_{n} z_{n}']  # this is psd!                 
+
+            for n in range(N):
+                state_two_slice += np.dot(gain_matrix[n, t- 1], smooth_sigma[n, t]) \
+                                    + np.dot(smooth_mu[n, t], smooth_mu[n, t - 1].T)
+                state_state_squared += smooth_sigma[n, t - 1] + np.dot(smooth_mu[n, t - 1], smooth_mu[n, t - 1].T)
+                state_state_squared_ahead += smooth_sigma[n, t] + np.dot(smooth_mu[n, t], smooth_mu[n, t].T)
+
+        # update parameters. Note that state_state_squared is psd and symmetric!
+        # A_new = (state_two_slice)(state_state_squared)^-1
+        # A_new' = (state_state_squared')^-1 (state_two_slice)' --> x' = B^-1 C' (recall B = symmetric)
+        # solve the system B x' = C' using cholesky decomposition on B'
+        # L' (L x') = C' --> L' v = C'
+        L = np.linalg.cholesky(state_state_squared)
+        v = solve_triangular(L, state_two_slice.T, lower=True)
+        cur_A[:, ...] = (solve_triangular(L, v, trans='T', lower=True)).T
+
+        # the update for Q is long and torturous :( see 13.114 of bishop for the monstrosity
+        # uncommenting this leads to explosions eventually
+        #updateQ = state_state_squared_ahead - np.dot(cur_A[0], state_two_slice.T)
+        #updateQ -= np.dot(state_two_slice, cur_A[0])
+        #updateQ += np.dot(np.dot(cur_A[0], state_state_squared), cur_A[0].T)
+        #updateQ /= (N - 1)
+        #cur_Q[:, ...] = sym(updateQ)
+
+        print(ll)
+
+
+def em_temporal(Y, A, C, Q, R, mu0, Q0, lambda_temporal, lambda_l2, iterations = 50, threshold_step = 0.001):
+    '''
+    EM with varying A -- use temporal regularization
+    '''
+
+    '''
+    Run smoothing on all trials with initial parameters to obtain estimates on state
+    C and R are fixed!
+
+    Only does A for now
+    '''
+    N = Y.shape[0]
+    T = Y.shape[1]
+    D = A.shape[1]
+
+    cur_A = A
+    cur_Q = Q
+    cur_m0 = mu0
+    cur_Q0 = Q0
+    ll_old = -100000
+
+    for i in range(50):
+        # the e-step for all time steps
+        params = rts_smooth_em(Y, cur_A, C, cur_Q, R, cur_m0, cur_Q0)
+        gain_matrix, ll, _, _, _, _, smooth_mu, smooth_sigma = params
+
+        # first calculate the beginning stuff
+        cur_m0 = np.mean(smooth_mu[:, 0], axis = 0)
+        cur_Q0 = np.mean(smooth_sigma[:, 0], axis = 0) + np.dot(cur_m0, cur_m0.T)     
+
+        # M step: use bishop's reference eq 13.110 and on
+        for t in range(1, T):
+            # look at eq 13.113 in bishop. Look at eq 13.104 - 13.107 for how to compute these efficiently
+            # these are used in the update of A
+            state_two_slice = np.zeros((D, D)) # sum of E[z_n z_{n-1}']   
+            state_state_squared = np.zeros((D, D)) # sum of E[z_{n-1} z_{n-1}']  # this is psd!   
+
+            # to do, this is just state_state_squared - one time step + one time step   
+            state_state_squared_ahead = np.zeros((D, D)) # sum of E[z_{n} z_{n}']  # this is psd!                 
+
+            for n in range(N):
+                state_two_slice += np.dot(gain_matrix[n, t- 1], smooth_sigma[n, t]) \
+                                    + np.dot(smooth_mu[n, t], smooth_mu[n, t - 1].T)
+                state_state_squared += smooth_sigma[n, t - 1] + np.dot(smooth_mu[n, t - 1], smooth_mu[n, t - 1].T)
+                state_state_squared_ahead += smooth_sigma[n, t] + np.dot(smooth_mu[n, t], smooth_mu[n, t].T)
+
+        # update parameters. Note that state_state_squared is psd and symmetric!
+        # A_new = (state_two_slice)(state_state_squared)^-1
+        # A_new' = (state_state_squared')^-1 (state_two_slice)' --> x' = B^-1 C' (recall B = symmetric)
+        # solve the system B x' = C' using cholesky decomposition on B'
+        # L' (L x') = C' --> L' v = C'
+        L = np.linalg.cholesky(state_state_squared)
+        v = solve_triangular(L, state_two_slice.T, lower=True)
+        cur_A[:, ...] = (solve_triangular(L, v, trans='T', lower=True)).T
+
+        # the update for Q is long and torturous :( see 13.114 of bishop for the monstrosity
+        # uncommenting this leads to explosions eventually
+        #updateQ = state_state_squared_ahead - np.dot(cur_A[0], state_two_slice.T)
+        #updateQ -= np.dot(state_two_slice, cur_A[0])
+        #updateQ += np.dot(np.dot(cur_A[0], state_state_squared), cur_A[0].T)
+        #updateQ /= (N - 1)
+        #cur_Q[:, ...] = sym(updateQ)
+
+        print(ll)
+        
     
 
