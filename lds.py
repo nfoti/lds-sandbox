@@ -683,6 +683,7 @@ def rts_smooth_fast(Y, A, C, Q, R, mu0, Q0, compute_lag1_cov=False):
     return ll, mus_smooth, sigmas_smooth, sigmas_smooth_tnt
 
 
+# what was this
 def em_objective(Y, params, fixedparams, ldsregparams,
                  mus_smooth, sigmas_smooth, sigmas_tnt_smooth):
 
@@ -766,7 +767,8 @@ def em(Y, initparams, fixedparams, ldsregparams, niter=10, Atrue=None, num_objva
                 Where z_t probability of being in all states at time t
             argmin(C_t) [ (Y_t - C{z_t})^2 ].
 
-            We can also estimate Q_t and R_t, the variance of noise through magic :(
+            We can also estimate Q_t and R_t, the variance of noise by taking the joints from smoothing
+            and then 
     '''
     
     L_Q = np.linalg.cholesky(Q)
@@ -808,7 +810,7 @@ def em(Y, initparams, fixedparams, ldsregparams, niter=10, Atrue=None, num_objva
         # e-step
         smoothed_state_params = rts_smooth(Y, A, C, Q, R, mu0, Q0)
         ll, mus_smooth, sigmas_smooth, sigmas_smooth_tnt = smoothed_state_params
-
+        print(ll)
         w_s = 1.
         x_smooth_0_outer = einsum2('ri,rj->rij', mus_smooth[:,0,:D],
                                                  mus_smooth[:,0,:D])
@@ -1048,32 +1050,32 @@ if __name__ == "__main__":
     assert np.allclose(sigmas_smooth, sigmas_smooth_fast), "sigmas don't match"
     assert np.allclose(sigmas_smooth_tnt, sigmas_smooth_tnt_fast), "sigmas_tnt don't match"
 
-    # ret = em(Y, initparams, fixedparams, ldsregparams, niter=50, Atrue=A)
-    # A_est = ret['A']
-    # em_obj_vals = ret['em_obj_vals']
-    # mus_smooth = ret['mus_smooth']
-    # Q_est = np.dot(ret['L_Q'], ret['L_Q'].T)
-    # Q0_est = np.dot(ret['L_Q0'], ret['L_Q0'].T)
+    ret = em(Y, initparams, fixedparams, ldsregparams, niter=50, Atrue=A)
+    A_est = ret['A']
+    em_obj_vals = ret['em_obj_vals']
+    mus_smooth = ret['mus_smooth']
+    Q_est = np.dot(ret['L_Q'], ret['L_Q'].T)
+    Q0_est = np.dot(ret['L_Q0'], ret['L_Q0'].T)
 
-    # mus_smooth = ret['mus_smooth']
-    # _, mus_smooth_true, _, _ = rts_smooth(Y, A, C, Q, R, mu0, Q0)
+    mus_smooth = ret['mus_smooth']
+    _, mus_smooth_true, _, _ = rts_smooth(Y, A, C, Q, R, mu0, Q0)
 
-    # plt.figure()
-    # for i in range(d):
-    #     mean_true = np.mean(x[:, :, i], axis=0)
-    #     mean_smoothed = np.mean(mus_smooth[:, :, i], axis=0)
-    #     mean_smoothed_true = np.mean(mus_smooth_true[:, :, i], axis=0)
-    #     plt.subplot(d, 1, i + 1)
-    #     plt.plot(mean_true, color='green', label='true (mean over trials)')
-    #     plt.plot(mean_smoothed, color='red', label=r'smoothed with $A_{est}$')
-    #     plt.plot(mean_smoothed_true, color='blue', label=r'smoothed with $A_{true}$')
-    #     if i == 0:
-    #         plt.legend()
-    # plt.tight_layout()
-    # plt.show()
+    plt.figure()
+    for i in range(d):
+        mean_true = np.mean(x[:, :, i], axis=0)
+        mean_smoothed = np.mean(mus_smooth[:, :, i], axis=0)
+        mean_smoothed_true = np.mean(mus_smooth_true[:, :, i], axis=0)
+        plt.subplot(d, 1, i + 1)
+        plt.plot(mean_true, color='green', label='true (mean over trials)')
+        plt.plot(mean_smoothed, color='red', label=r'smoothed with $A_{est}$')
+        plt.plot(mean_smoothed_true, color='blue', label=r'smoothed with $A_{true}$')
+        if i == 0:
+            plt.legend()
+    plt.tight_layout()
+    plt.show()
 
-    # plt.figure()
-    # plt.plot(em_obj_vals)
+    plt.figure()
+    plt.plot(em_obj_vals)
 
     #print("running kalman filter tests")
     #ll_loop, mus_filt_loop, sigmas_filt_loop = kalman_filter_loop(Y, A, C, Q, R, mu0, Q0)
