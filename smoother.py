@@ -297,26 +297,19 @@ def em_temporal(Y, A, C, Q, R, mu0, Q0, lambda_temporal = 0, lambda_l2 = 0, iter
         if X_true is not None:
             mus_smooth = X_true
 
-        print('Current:')
-        print(cur_A[0])
-        print('ll', ll)
-        print()
-
         # first calculate the beginning stuff
         cur_m0 = np.mean(mus_smooth[:, 0], axis = 0)
-        cur_Q0 = np.mean(sigmas_smooth[:, 0], axis = 0)
+        cur_Q0 = np.mean(sigmas_smooth[:, 0], axis = 0) + np.dot(cur_m0, cur_m0.T)
+        #cur_A[0, :] = cur_m0
+        #cur_Q0
 
         # M step: use gradient descent
         new_A = cur_A.copy()
-        for t in range(T - 1):
 
-            # update timestep t until convergence of magic stuff
+        # currently update every A_t's
+        for t in range(T - 2, -1, -1):
             gd_i = 0
             while gd_i < iterations_gd:
-
-                #if t == 8 and em_it == 1:
-                #    import pdb
-                #    pdb.set_trace()
                 gd_i += 1
 
                 # updated A_t for this iteration of em
@@ -341,6 +334,13 @@ def em_temporal(Y, A, C, Q, R, mu0, Q0, lambda_temporal = 0, lambda_l2 = 0, iter
 
                     # TODO: cholesky this
                     error = mu_t_next - np.dot(A_t, mu_t_prev)
+                    if t == 0 and gd_i == 1 and n == 0:
+                        print('Current:')
+                        print(cur_A[0])
+                        print('ll', ll)
+                        print(error)
+                        print()
+
                     gradient_n = np.dot(mu_t_prev, error.T)
 
                     #numerical concerns with inverting a very small sigma
