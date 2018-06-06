@@ -5,6 +5,14 @@ from autograd_linalg import solve_triangular
 from lds import rts_smooth
 from matplotlib import pyplot as plt
 
+try:
+    from einsum2 import einsum2
+except ImportError:
+    # rename standard numpy function if don't have einsum2
+    print("=> WARNING: using standard numpy.einsum,",
+          "consider installing einsum2 package")
+    from numpy import einsum as einsum2
+
 '''
 ToDo: einsum2 everything for #gains
 '''
@@ -356,7 +364,7 @@ def em_temporal_closed_form(Y, A, C, Q, R, mu0, Q0, lambda_temporal = 0, lambda_
         cur_A = new_A
 
 
-def lds_plot_progress(A_true, cur_A, D, fig_quad, axes_quad, save=False, save_name=None):
+def lds_plot_progress(A_true, cur_A, Q_true, cur_Q, D, fig_quad, axes_quad, save=False, save_name=None):
     '''
     :param A_true: shape is (T, D, D)
     :param cur_A: shape is (T, D, D)
@@ -367,7 +375,10 @@ def lds_plot_progress(A_true, cur_A, D, fig_quad, axes_quad, save=False, save_na
 
             if A_true is not None:
                 axes_quad[i, j].plot(A_true[:, i, j], color='green')
+            if Q_true is not None:
+                axes_quad[i, j].plot(Q_true[:, i, j], color='green', linestyle='--')
             axes_quad[i, j].plot(cur_A[:, i, j], color='red')
+            axes_quad[i, j].plot(cur_Q[:, i, j], color='red', linestyle='--')
             axes_quad[i, j].set_ylim(-1.5, 1.5)
     fig_quad.canvas.draw()
 
@@ -378,7 +389,7 @@ def lds_plot_progress(A_true, cur_A, D, fig_quad, axes_quad, save=False, save_na
 
 
 def em_temporal(Y, A, C, Q, R, mu0, Q0,
-                lambda_temporal=0, lambda_l2=0, iterations_em=10, iterations_gd=5, learning_rate=1, gd_threshold=0.001,
+                lambda_temporal=0, lambda_l2=0, iterations_em=20, iterations_gd=5, learning_rate=1, gd_threshold=0.001,
                 A_true=None, X_true=None, Q_true=None, plot_progress=False):
     '''
     EM with varying A
@@ -404,24 +415,26 @@ def em_temporal(Y, A, C, Q, R, mu0, Q0,
         fig_quad, axes_quad = plt.subplots(D, D, figsize=(12, 6))
 
     for em_it in range(iterations_em):
-        if plot_progress:
-            lds_plot_progress(A_true, cur_A, D, fig_quad, axes_quad,
-                                save=em_it in [0, 1, 2, 3, 5, 10], save_name='iteration' + str(em_it))
-
         # the e-step for all time steps
         # params = rts_smooth_em(Y, cur_A, C, cur_Q, R, cur_m0, cur_Q0)
         # gain_matrix, ll, _, _, _, _, smooth_mu, smooth_sigma = params
         ll, mus_smooth, sigmas_smooth, sigmas_smooth_tnt = rts_smooth(Y, cur_A, C, cur_Q, R, cur_m0, cur_Q0)
+        print('Iteration %d with ll %f' % (em_it, ll))
+
+        if plot_progress:
+            lds_plot_progress(A_true, cur_A, Q_true, cur_Q, D, fig_quad, axes_quad,
+                                save=em_it in [0, 1, 2, 3, 5, 10], save_name='iteration' + str(em_it))
+            #lds_plot_progress(np.array(X_true, mus_smooth, Q_true, cur_Q, D, fig_quad, axes_quad,
+            #                    save=em_it in [0, 1, 2, 3, 5, 10], save_name='iteration' + str(em_it)))
 
         if X_true is not None:
+            print('True X:', X_true[0])
             mus_smooth = X_true
-
-        # first calculate the beginning stuff
-        cur_m0 = np.mean(mus_smooth[:, 0], axis=0)
-        cur_Q0 = np.mean(sigmas_smooth[:, 0], axis=0) + np.dot(cur_m0, cur_m0.T)
+        print('Smoothed X:', mus_smooth[0])
 
         # M step: use gradient descent on -ll
         new_A = cur_A.copy()
+        new_Q = cur_Q.copy()
 
         # currently update every A_t's
         for t in range(T - 2, -1, -1):
@@ -443,9 +456,6 @@ def em_temporal(Y, A, C, Q, R, mu0, Q0,
 
                     sigma_t = sigmas_smooth[n, t]
 
-                    if Q_true is not None:
-                        sigma_t = Q_true[t]
-
                     def obj_func_At(A_t, sigma_t):
                         # this returns the -ln(N(z_t | A_t, Z_{t-1}, Q_t))
                         # we want to minimize this!
@@ -460,10 +470,40 @@ def em_temporal(Y, A, C, Q, R, mu0, Q0,
 
                 gradient /= N
                 sigma_inverses /= N
-                new_A[t] -= (0.8 ** gd_i) * learning_rate * gradient
+                new_A[t] -= (0.8 ** (gd_i)) * learning_rate * gradient
+
+                # for calculating updates to Q_t, taken from lds
+                w_s = 1.
+                x_smooth_outer = einsum2('rti,rtj->rtij', mus_smooth[:, 1:, :D],
+                                         mus_smooth[:, 1:, :D])
+                B1 = w_s * np.sum(sigmas_smooth[:, 1:, :D, :D] + x_smooth_outer, axis=0)
+
+                z_smooth_outer = einsum2('rti,rtj->rtij', mus_smooth[:, :-1, :],
+                                         mus_smooth[:, :-1, :])
+                B3 = w_s * np.sum(sigmas_smooth[:, :-1, :, :] + z_smooth_outer, axis=0)
+
+                mus_smooth_outer_l1 = einsum2('rti,rtj->rtij',
+                                              mus_smooth[:, 1:, :D],
+                                              mus_smooth[:, :-1, :])
+                B2 = w_s * np.sum(sigmas_smooth_tnt[:, :, :D, :] + mus_smooth_outer_l1, axis=0)
+
+                # use A_t to get Q_t, this is taken from lds sandbox!
+                AtB2T = einsum2('tik,tjk->tij', new_A[:-1], B2)
+                B2AtT = einsum2('tik,tjk->tij', B2, new_A[:-1])
+
+                # einsum2 is faster
+                # AtB3AtT = np.einsum('tik,tkl,tjl->tij', At, B3, At)
+                tmp = einsum2('tik,tkl->til', new_A[:-1], B3)
+                AtB3AtT = einsum2('til,tjl->tij', tmp, new_A[:-1])
+                elbo_2 = np.sum(B1 - AtB2T - B2AtT + AtB3AtT, axis=0)
+                new_Q[t] = 1. / (N * T) * elbo_2
 
         # update current A matrix for new E step
         cur_A[:] = new_A[:]
 
         # update the sigma matrix from closed form
-        cur_Q[:] = new_A[:]
+        cur_Q[:] = new_Q[:]
+
+        # first calculate the beginning stuff
+        cur_m0 = np.mean(mus_smooth[:, 0], axis=0)
+        cur_Q0 = np.mean(sigmas_smooth[:, 0], axis=0) + np.dot(cur_m0, cur_m0.T)
