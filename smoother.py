@@ -1,4 +1,5 @@
-import numpy as np
+import autograd.numpy as np
+from autograd import grad
 
 from autograd_linalg import solve_triangular
 from lds import rts_smooth
@@ -251,7 +252,7 @@ def em_stationary(Y, A, C, Q, R, mu0, Q0, iterations = 500, threshold_stop = 0.0
         print(cur_A[0])
         print(ll)
 
-def em_temporal(Y, A, C, Q, R, mu0, Q0, lambda_temporal = 0, lambda_l2 = 0, iterations_em = 50, iterations_gd = 50, learning_rate = 1, gd_threshold = 0.001, A_true = None, X_true = None, Q_true = None):
+def em_temporal_closed_form(Y, A, C, Q, R, mu0, Q0, lambda_temporal = 0, lambda_l2 = 0, iterations_em = 50, iterations_gd = 50, learning_rate = 1, gd_threshold = 0.001, A_true = None, X_true = None, Q_true = None):
     '''
     EM with varying A
         Few 
@@ -355,3 +356,114 @@ def em_temporal(Y, A, C, Q, R, mu0, Q0, lambda_temporal = 0, lambda_l2 = 0, iter
         cur_A = new_A
 
 
+def lds_plot_progress(A_true, cur_A, D, fig_quad, axes_quad, save=False, save_name=None):
+    '''
+    :param A_true: shape is (T, D, D)
+    :param cur_A: shape is (T, D, D)
+    '''
+    for i in range(D):
+        for j in range(D):
+            axes_quad[i, j].cla()
+
+            if A_true is not None:
+                axes_quad[i, j].plot(A_true[:, i, j], color='green')
+            axes_quad[i, j].plot(cur_A[:, i, j], color='red')
+            axes_quad[i, j].set_ylim(-1.5, 1.5)
+    fig_quad.canvas.draw()
+
+    if save and save_name is not None:
+        fig_quad.savefig(str(save_name) + '.png')
+
+    plt.pause(1)
+
+
+def em_temporal(Y, A, C, Q, R, mu0, Q0,
+                lambda_temporal=0, lambda_l2=0, iterations_em=10, iterations_gd=5, learning_rate=1, gd_threshold=0.001,
+                A_true=None, X_true=None, Q_true=None, plot_progress=False):
+    '''
+    EM with varying A
+        Few
+    '''
+
+    '''
+    Run smoothing on all trials with initial parameters to obtain estimates on state
+    C and R are fixed!
+
+    Only does A for now
+    '''
+    N = Y.shape[0]
+    T = Y.shape[1]
+    D = A.shape[1]
+
+    cur_A = A
+    cur_Q = Q
+    cur_m0 = mu0
+    cur_Q0 = Q0
+    fig_quad, axes_quad = None, None
+    if plot_progress:
+        fig_quad, axes_quad = plt.subplots(D, D, figsize=(12, 6))
+
+    for em_it in range(iterations_em):
+        if plot_progress:
+            lds_plot_progress(A_true, cur_A, D, fig_quad, axes_quad,
+                                save=em_it in [0, 1, 2, 3, 5, 10], save_name='iteration' + str(em_it))
+
+        # the e-step for all time steps
+        # params = rts_smooth_em(Y, cur_A, C, cur_Q, R, cur_m0, cur_Q0)
+        # gain_matrix, ll, _, _, _, _, smooth_mu, smooth_sigma = params
+        ll, mus_smooth, sigmas_smooth, sigmas_smooth_tnt = rts_smooth(Y, cur_A, C, cur_Q, R, cur_m0, cur_Q0)
+
+        if X_true is not None:
+            mus_smooth = X_true
+
+        # first calculate the beginning stuff
+        cur_m0 = np.mean(mus_smooth[:, 0], axis=0)
+        cur_Q0 = np.mean(sigmas_smooth[:, 0], axis=0) + np.dot(cur_m0, cur_m0.T)
+
+        # M step: use gradient descent on -ll
+        new_A = cur_A.copy()
+
+        # currently update every A_t's
+        for t in range(T - 2, -1, -1):
+            gd_i = 0
+            while gd_i < iterations_gd:
+                gd_i += 1
+
+                # updated A_t for this iteration of em
+                A_t = new_A[t].copy()
+
+                # average up the gradient as calculated from all of the trials
+                gradient = A_t.copy()
+                gradient.fill(0)
+                sigma_inverses = A_t.copy()
+                sigma_inverses.fill(0)
+                for n in range(N):
+                    mu_t_prev = np.reshape(mus_smooth[n, t], (D, 1))
+                    mu_t_next = np.reshape(mus_smooth[n, t + 1], (D, 1))
+
+                    sigma_t = sigmas_smooth[n, t]
+
+                    if Q_true is not None:
+                        sigma_t = Q_true[t]
+
+                    def obj_func_At(A_t, sigma_t):
+                        # this returns the -ln(N(z_t | A_t, Z_{t-1}, Q_t))
+                        # we want to minimize this!
+                        error = mu_t_next - np.dot(A_t, mu_t_prev)
+                        obj = np.dot(error.T, np.linalg.inv(sigma_t))
+                        obj = np.dot(obj, error)
+                        return obj
+
+                    grad_fun = grad(lambda A_t: obj_func_At(A_t, sigma_t))
+
+                    gradient += grad_fun(A_t)
+
+                gradient /= N
+                sigma_inverses /= N
+                new_A[t] -= (0.8 ** gd_i) * learning_rate * gradient
+
+        # update current A matrix for new E step
+        cur_A[:] = new_A[:]
+
+        # update the sigma matrix from closed form
+        cur_Q[:] = new_A[:]
