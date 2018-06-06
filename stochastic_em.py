@@ -4,6 +4,7 @@ from autograd import grad
 from autograd_linalg import solve_triangular
 from lds import rts_smooth
 from matplotlib import pyplot as plt
+from lds import em_objective
 
 try:
     from einsum2 import einsum2
@@ -197,13 +198,29 @@ def rts_smooth_basic(Y, A, C, Q, R, mu0, Q0):
     return rts_smooth_em(Y, A, C, Q, R, mu0, Q0)[1:]
 
 
-def em_stationary(Y, A, C, Q, R, mu0, Q0, iterations = 500, threshold_stop = 0.001):
-    '''
-    Run smoothing on all trials with initial parameters to obtain estimates on state
-    C and R are fixed!
+def em_stationary(Y, A, C, Q, R, mu0, Q0):
+    """
+        Y : ndarray, shape=(N, T, D)
+          Observations
 
-    Only does A for now
-    '''
+        A : ndarray, shape=(T, D, D)
+          Time-varying dynamics matrices
+
+        C : ndarray, shape=(p, D)
+          Observation matrix
+
+        mu0: ndarray, shape=(D,)
+          mean of initial state variable
+
+        Q0 : ndarray, shape=(D, D)
+          Covariance of initial state variable
+
+        Q : ndarray, shape=(D, D)
+          Covariance of latent states
+
+        R : ndarray, shape=(D, D)
+          Covariance of observations
+    """
     N = Y.shape[0]
     T = Y.shape[1]
     D = A.shape[1]
@@ -212,7 +229,6 @@ def em_stationary(Y, A, C, Q, R, mu0, Q0, iterations = 500, threshold_stop = 0.0
     cur_Q = Q
     cur_m0 = mu0
     cur_Q0 = Q0
-    ll_old = -100000
 
     for i in range(50):
         # the e-step for all time steps
@@ -251,6 +267,7 @@ def em_stationary(Y, A, C, Q, R, mu0, Q0, iterations = 500, threshold_stop = 0.0
 
         # the update for Q is long and torturous :( see 13.114 of bishop for the monstrosity
         # uncommenting this leads to explosions eventually
+        # TODO: fix this
         #updateQ = state_state_squared_ahead - np.dot(cur_A[0], state_two_slice.T)
         #updateQ -= np.dot(state_two_slice, cur_A[0])
         #updateQ += np.dot(np.dot(cur_A[0], state_state_squared), cur_A[0].T)
@@ -260,10 +277,9 @@ def em_stationary(Y, A, C, Q, R, mu0, Q0, iterations = 500, threshold_stop = 0.0
         print(cur_A[0])
         print(ll)
 
-def em_temporal_closed_form(Y, A, C, Q, R, mu0, Q0, lambda_temporal = 0, lambda_l2 = 0, iterations_em = 50, iterations_gd = 50, learning_rate = 1, gd_threshold = 0.001, A_true = None, X_true = None, Q_true = None):
+def em_stochasic_temporal_closed_form(Y, A, C, Q, R, mu0, Q0, lambda_temporal = 0, lambda_l2 = 0, iterations_em = 50, iterations_gd = 50, learning_rate = 1, gd_threshold = 0.001, A_true = None, X_true = None, Q_true = None):
     '''
-    EM with varying A
-        Few 
+    Note: this does not work
     '''
 
     '''
@@ -280,7 +296,6 @@ def em_temporal_closed_form(Y, A, C, Q, R, mu0, Q0, lambda_temporal = 0, lambda_
     cur_Q = Q
     cur_m0 = mu0
     cur_Q0 = Q0
-    ll_old = -100000
     fig_quad, axes_quad = plt.subplots(D, D, figsize=(12,6))
 
     for em_it in range(iterations_em):
@@ -309,8 +324,6 @@ def em_temporal_closed_form(Y, A, C, Q, R, mu0, Q0, lambda_temporal = 0, lambda_
         # first calculate the beginning stuff
         cur_m0 = np.mean(mus_smooth[:, 0], axis = 0)
         cur_Q0 = np.mean(sigmas_smooth[:, 0], axis = 0) + np.dot(cur_m0, cur_m0.T)
-        #cur_A[0, :] = cur_m0
-        #cur_Q0
 
         # M step: use gradient descent
         new_A = cur_A.copy()
@@ -343,12 +356,6 @@ def em_temporal_closed_form(Y, A, C, Q, R, mu0, Q0, lambda_temporal = 0, lambda_
 
                     # TODO: cholesky this
                     error = mu_t_next - np.dot(A_t, mu_t_prev)
-                    if t == 0 and gd_i == 1 and n == 0:
-                        print('Current:')
-                        print(cur_A[0])
-                        print('ll', ll)
-                        print(error)
-                        print()
 
                     gradient_n = np.dot(mu_t_prev, error.T)
 
@@ -377,31 +384,55 @@ def lds_plot_progress(A_true, cur_A, Q_true, cur_Q, D, fig_quad, axes_quad, save
                 axes_quad[i, j].plot(A_true[:, i, j], color='green')
             if Q_true is not None:
                 axes_quad[i, j].plot(Q_true[:, i, j], color='green', linestyle='--')
-            axes_quad[i, j].plot(cur_A[:, i, j], color='red')
-            axes_quad[i, j].plot(cur_Q[:, i, j], color='red', linestyle='--')
+            if cur_A is not None:
+                axes_quad[i, j].plot(cur_A[:, i, j], color='red')
+            if cur_Q is not None:
+                axes_quad[i, j].plot(cur_Q[:, i, j], color='red', linestyle='--')
             axes_quad[i, j].set_ylim(-1.5, 1.5)
     fig_quad.canvas.draw()
 
     if save and save_name is not None:
         fig_quad.savefig(str(save_name) + '.png')
 
-    plt.pause(1)
+    plt.pause(1.0 / 60.0)
 
 
-def em_temporal(Y, A, C, Q, R, mu0, Q0,
+def em_stochastic_temporal(Y, A, C, Q, R, mu0, Q0,
                 lambda_temporal=0, lambda_l2=0, iterations_em=20, iterations_gd=5, learning_rate=1, gd_threshold=0.001,
                 A_true=None, X_true=None, Q_true=None, plot_progress=False):
-    '''
-    EM with varying A
-        Few
-    '''
+    """ Stochastic EM with time varying A and Q
 
-    '''
-    Run smoothing on all trials with initial parameters to obtain estimates on state
-    C and R are fixed!
+        Y : ndarray, shape=(N, T, D)
+          Observations
 
-    Only does A for now
-    '''
+        A : ndarray, shape=(T, D, D)
+          Initial guess of time-varying dynamic matrices
+
+        C : ndarray, shape=(p, D)
+          Observation matrix
+
+        Q : ndarray, shape=(T, D, D)
+          Initial guess of time-varying covariances of latent states
+
+        R : ndarray, shape=(D, D)
+          Covariance of observations
+
+        mu0: ndarray, shape=(D,)
+          mean of initial state variable
+
+        Q0 : ndarray, shape=(D, D)
+          Covariance of initial state variable
+
+        lambda_temporal: float
+        lambda_l2: float
+
+        if A_t is not None, will plot true dynamics under plot_progress
+        if X_true is not None, will use X_true instead of smoothed X's for debugging
+        if Q_true is not None, will use Q_true instead of smoothed X's for debugging
+
+        plot_progress plots true (if given) and currently predicted A and Q
+    """
+
     N = Y.shape[0]
     T = Y.shape[1]
     D = A.shape[1]
@@ -424,19 +455,18 @@ def em_temporal(Y, A, C, Q, R, mu0, Q0,
         if plot_progress:
             lds_plot_progress(A_true, cur_A, Q_true, cur_Q, D, fig_quad, axes_quad,
                                 save=em_it in [0, 1, 2, 3, 5, 10], save_name='iteration' + str(em_it))
-            #lds_plot_progress(np.array(X_true, mus_smooth, Q_true, cur_Q, D, fig_quad, axes_quad,
-            #                    save=em_it in [0, 1, 2, 3, 5, 10], save_name='iteration' + str(em_it)))
 
         if X_true is not None:
             print('True X:', X_true[0])
             mus_smooth = X_true
-        print('Smoothed X:', mus_smooth[0])
+            print('Smoothed X:', mus_smooth[0])
 
         # M step: use gradient descent on -ll
         new_A = cur_A.copy()
         new_Q = cur_Q.copy()
 
         # currently update every A_t's
+        # TODO: unroll loops with einsum2
         for t in range(T - 2, -1, -1):
             gd_i = 0
             while gd_i < iterations_gd:
@@ -469,6 +499,8 @@ def em_temporal(Y, A, C, Q, R, mu0, Q0,
                     gradient += grad_fun(A_t)
 
                 gradient /= N
+
+                # TODO: verify this and update Q, from lds.py
                 sigma_inverses /= N
                 new_A[t] -= (0.8 ** (gd_i)) * learning_rate * gradient
 
@@ -491,8 +523,6 @@ def em_temporal(Y, A, C, Q, R, mu0, Q0,
                 AtB2T = einsum2('tik,tjk->tij', new_A[:-1], B2)
                 B2AtT = einsum2('tik,tjk->tij', B2, new_A[:-1])
 
-                # einsum2 is faster
-                # AtB3AtT = np.einsum('tik,tkl,tjl->tij', At, B3, At)
                 tmp = einsum2('tik,tkl->til', new_A[:-1], B3)
                 AtB3AtT = einsum2('til,tjl->tij', tmp, new_A[:-1])
                 elbo_2 = np.sum(B1 - AtB2T - B2AtT + AtB3AtT, axis=0)
@@ -500,10 +530,12 @@ def em_temporal(Y, A, C, Q, R, mu0, Q0,
 
         # update current A matrix for new E step
         cur_A[:] = new_A[:]
+        print("GRADIENT MOI", new_A[0])
 
         # update the sigma matrix from closed form
-        cur_Q[:] = new_Q[:]
+        #cur_Q[:] = new_Q[:]
 
         # first calculate the beginning stuff
         cur_m0 = np.mean(mus_smooth[:, 0], axis=0)
         cur_Q0 = np.mean(sigmas_smooth[:, 0], axis=0) + np.dot(cur_m0, cur_m0.T)
+
