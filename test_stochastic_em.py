@@ -1,5 +1,5 @@
-import numpy as np
 import timeit
+import autograd.numpy as np
 from lds import rand_psd, kalman_filter, rts_smooth, lds_simulate_loop, em
 from stochastic_em import kalman_filter_basic, rts_smooth_basic, em_stochastic_temporal
 
@@ -70,8 +70,8 @@ if __name__ == '__main__':
     #test_kalman_filter()
     test_kalman_smoother()
 
-    N = 1000
-    T = 13
+    N = 20
+    T = 100
     D = 3
     p = 3    
  
