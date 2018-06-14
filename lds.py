@@ -124,6 +124,32 @@ def component_matrix(As, nlags):
     return res
 
 
+def lds_plot_progress(A_true, cur_A, Q_true, cur_Q, D, fig_quad, axes_quad, save=False, save_name=None):
+    '''
+    :param A_true: shape is (T, D, D)
+    :param cur_A: shape is (T, D, D)
+    '''
+    for i in range(D):
+        for j in range(D):
+            axes_quad[i, j].cla()
+
+            if A_true is not None:
+                axes_quad[i, j].plot(A_true[:, i, j], color='green')
+            if Q_true is not None:
+                axes_quad[i, j].plot(Q_true[:, i, j], color='green', linestyle='--')
+            if cur_A is not None:
+                axes_quad[i, j].plot(cur_A[:, i, j], color='red')
+            if cur_Q is not None:
+                axes_quad[i, j].plot(cur_Q[:, i, j], color='red', linestyle='--')
+            axes_quad[i, j].set_ylim(-1.5, 1.5)
+    fig_quad.canvas.draw()
+
+    if save and save_name is not None:
+        fig_quad.savefig(str(save_name) + '.png')
+
+    plt.pause(1.0 / 60.0)
+
+
 def lds_simulate_loop(T, A, C, Q, R, mu0, Q0, ntrials):
     """ Simulates LDS with the following parameters. duh!
         Note: This function doesn't handle control inputs (yet).
@@ -684,12 +710,10 @@ def rts_smooth_fast(Y, A, C, Q, R, mu0, Q0, compute_lag1_cov=False):
 
 
 # what was this
-def em_objective(Y, params, fixedparams, ldsregparams,
+def em_objective(Y, D, params, fixedparams, ldsregparams,
                  mus_smooth, sigmas_smooth, sigmas_tnt_smooth):
 
     At, L_Q, L_Q0 = params
-    _, D, Dnlags = A.shape
-    nlags = Dnlags // D
 
     ntrials, T, p = Y.shape
 
@@ -753,23 +777,11 @@ def em_objective(Y, params, fixedparams, ldsregparams,
     return L1 + L2 + L3 + penalty, L1, L2, L3, penalty
 
 
-def em(Y, initparams, fixedparams, ldsregparams, niter=10, Atrue=None, num_objvals=5, tol=1e-6):
+def em(Y, initparams, fixedparams, ldsregparams, niter=10, Atrue=None, plot_progress=False, save_plots=False, debug=False, num_objvals=5, tol=1e-6):
     A_init, Q_init, Q0_init = initparams
     A = A_init.copy()
     Q = Q_init.copy()
     Q0 = Q0_init.copy()
-    
-    '''
-    High level overview
-        Estimate states using A, Q, C, R using RTS for inference on observations Y
-        Learn A, Q, C, R from labels
-            argmin(A_t) [ z_t - Az_{t - 1})^2 ]. 
-                Where z_t probability of being in all states at time t
-            argmin(C_t) [ (Y_t - C{z_t})^2 ].
-
-            We can also estimate Q_t and R_t, the variance of noise by taking the joints from smoothing
-            and then 
-    '''
     
     L_Q = np.linalg.cholesky(Q)
 
@@ -789,19 +801,14 @@ def em(Y, initparams, fixedparams, ldsregparams, niter=10, Atrue=None, num_objva
 
     At = A[:-1]
 
-    fig_quad, axes_quad = plt.subplots(D, D, figsize=(12,6))
-    # plot true and estimated dynamics for each (i, j) entry
-    for i in range(D):
-        for j in range(D):
-            axes_quad[i,j].cla()
-            if Atrue is not None:
-                axes_quad[i,j].plot(Atrue[:-1, i, j], color='green')
-            axes_quad[i,j].plot(At[:, i, j], color='red')
-            axes_quad[i,j].set_ylim(-1.5, 1.5)
-    fig_quad.canvas.draw()
-    plt.pause(1./60.)
+    fig_quad, axes_quad = None, None
+    if plot_progress:
+        fig_quad, axes_quad = plt.subplots(D, D, figsize=(12, 6))
+        lds_plot_progress(Atrue, At, None, None, D, fig_quad, axes_quad,
+                          save=save_plots, save_name='fullem_iteration0')
 
     for em_it in range(niter):
+        print('Cur it', em_it)
         L_Q0 = np.linalg.cholesky(Q0)
 
         # why repeat this line
@@ -810,7 +817,7 @@ def em(Y, initparams, fixedparams, ldsregparams, niter=10, Atrue=None, num_objva
         # e-step
         smoothed_state_params = rts_smooth(Y, A, C, Q, R, mu0, Q0)
         ll, mus_smooth, sigmas_smooth, sigmas_smooth_tnt = smoothed_state_params
-        print(ll)
+        #print(ll)
         w_s = 1.
         x_smooth_0_outer = einsum2('ri,rj->rij', mus_smooth[:,0,:D],
                                                  mus_smooth[:,0,:D])
@@ -834,31 +841,32 @@ def em(Y, initparams, fixedparams, ldsregparams, niter=10, Atrue=None, num_objva
                                       mus_smooth[:,:-1,:])
         B2 = w_s*np.sum(sigmas_smooth_tnt[:,:,:D,:] + mus_smooth_outer_l1, axis=0)
 
-        it_params = (At, L_Q, Q0)
-        it_fixedparams = (C, L_R)
-        em_obj, L1, L2, L3, penalty = em_objective(Y, it_params, it_fixedparams, ldsregparams,
-                              mus_smooth, sigmas_smooth, sigmas_smooth_tnt)
-        em_obj_list[em_it] = em_obj
+        if debug:
+            it_params = (At, L_Q, Q0)
+            it_fixedparams = (C, L_R)
+            em_obj, L1, L2, L3, penalty = em_objective(Y, D, it_params, it_fixedparams, ldsregparams,
+                                  mus_smooth, sigmas_smooth, sigmas_smooth_tnt)
+            em_obj_list[em_it] = em_obj
 
-        # check for updated best iterate
-        if em_obj < best_em_obj:
-            best_em_obj = em_obj
-            bestparams = (A.copy(), Q.copy(), Q0.copy())
+            # check for updated best iterate
+            if em_obj < best_em_obj:
+                best_em_obj = em_obj
+                bestparams = (A.copy(), Q.copy(), Q0.copy())
 
-        # check for convergence
-        if em_it >= num_objvals:
-            vals_to_check = em_obj_list[em_it-num_objvals:em_it]
-            if np.all(np.abs((vals_to_check - em_obj) / em_obj) <= tol):
-                print('EM objective converged')
-                em_obj_list = em_obj_list[:em_it+1]
-                break
+            # check for convergence
+            if em_it >= num_objvals:
+                vals_to_check = em_obj_list[em_it-num_objvals:em_it]
+                if np.all(np.abs((vals_to_check - em_obj) / em_obj) <= tol):
+                    print('EM objective converged')
+                    em_obj_list = em_obj_list[:em_it+1]
+                    break
 
-        print('em iter:', em_it+1, 'EM objective: ', em_obj)
-        print('  L1:', L1)
-        print('  L2:', L2)
-        print('  L3:', L3)
-        print('  pen:', penalty)
-        print(np.dot(L_Q, L_Q.T))
+            print('em iter:', em_it+1, 'EM objective: ', em_obj)
+            print('  L1:', L1)
+            print('  L2:', L2)
+            print('  L3:', L3)
+            print('  pen:', penalty)
+            print(np.dot(L_Q, L_Q.T))
 
         # m-step
         Q0 = 1./(ntrials) * B0
@@ -936,15 +944,9 @@ def em(Y, initparams, fixedparams, ldsregparams, niter=10, Atrue=None, num_objva
             #    plt.pause(1./60.)
 
         # plot true and estimated dynamics for each (i, j) entry
-        for i in range(D):
-            for j in range(D):
-                axes_quad[i,j].cla()
-                if Atrue is not None:
-                    axes_quad[i,j].plot(Atrue[:-1, i, j], color='green')
-                axes_quad[i,j].plot(At[:, i, j], color='red')
-                axes_quad[i,j].set_ylim(-1.5, 1.5)
-        fig_quad.canvas.draw()
-        plt.pause(1./60.)
+        if plot_progress:
+            lds_plot_progress(Atrue, At, None, None, D, fig_quad, axes_quad,
+                              save=save_plots, save_name='fullem_iteration' + str(em_it))
 
         ## plot function curves in direction of gradient for At and L_Q
         #interp_vals = np.linspace(-1, 1, 101)
