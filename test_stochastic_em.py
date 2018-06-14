@@ -2,6 +2,7 @@ import timeit
 import autograd.numpy as np
 from lds import rand_psd, kalman_filter, rts_smooth, lds_simulate_loop, em
 from stochastic_em import kalman_filter_basic, rts_smooth_basic, em_stochastic_temporal
+from lds_stochastic_em import em_stochastic
 
 # TODO: remove this when done!!!!!!
 np.random.seed(325199)
@@ -70,12 +71,11 @@ if __name__ == '__main__':
     #test_kalman_filter()
     test_kalman_smoother()
 
-    N = 20
+    N = 2000
     T = 100
-    D = 3
-    p = 3    
- 
-    A_stationary = np.identity(D) * 0.5 #np.random.rand(D, D)
+    D = 20
+
+    A_stationary = np.identity(D) #np.random.rand(D, D)
 
     A_true = [A_stationary.copy() for i in range(T)]
     A_true = np.array(A_true)
@@ -104,15 +104,23 @@ if __name__ == '__main__':
 
     initparams = (A_init, Q0, Q0)
     fixedparams = (C_true, R_true, mu0)
-    ldsregparams = (0, 0)
+    ldsregparams = (0.1, 0.1)
 
-    #print('**************truth**************')
-    em(Y, initparams, fixedparams, ldsregparams, niter=5, Atrue=A_true, num_objvals=5, tol=1e-6)
+    print('**************truth**************')
+    t1 = timeit.default_timer()
+    em(Y, initparams, fixedparams, ldsregparams, niter=50, Atrue=A_true, num_objvals=5, tol=1e-6)
+    t2 = timeit.default_timer()
+    print('\tFull took', t2 - t1)
     #print('Final A:\n', ret['A'][0])
     #print()
 
-    #print('**************temporal model**************')
-    em_stochastic_temporal(Y, A_init, C_true, Q_true, R_true, mu0, Q0, learning_rate=0.05, A_true=A_true, X_true=None, Q_true=Q_true, plot_progress=True)
+    print('**************temporal model**************')
+    t1 = timeit.default_timer()
+    em_stochastic(Y, initparams, fixedparams, ldsregparams,
+                  Atrue=A_true, plot_progress=False, save_plots=False, debug=False, maxiter=50,
+                  num_stochastic=10, num_objvals=5, tol=1e-6)
+    t2 = timeit.default_timer()
+    print('\tStochastic took', t2 - t1)
     #print()
 
     #print('**************stationary model**************')
