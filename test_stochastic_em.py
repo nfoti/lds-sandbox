@@ -106,22 +106,21 @@ if __name__ == '__main__':
     fixedparams = (C_true, R_true, mu0)
     ldsregparams = (0.1, 0.1)
 
-    print('**************truth**************')
-    t1 = timeit.default_timer()
-    em(Y, initparams, fixedparams, ldsregparams, niter=50, Atrue=A_true, num_objvals=5, tol=1e-6)
-    t2 = timeit.default_timer()
-    print('\tFull took', t2 - t1)
-    #print('Final A:\n', ret['A'][0])
-    #print()
-
     print('**************temporal model**************')
     t1 = timeit.default_timer()
     em_stochastic(Y, initparams, fixedparams, ldsregparams,
-                  Atrue=A_true, plot_progress=False, save_plots=False, debug=False, maxiter=50,
+                  Atrue=A_true, plot_progress=False, save_plots=False, debug=False, maxiter=10,
                   num_stochastic=10, num_objvals=5, tol=1e-6)
     t2 = timeit.default_timer()
     print('\tStochastic took', t2 - t1)
-    #print()
+    print()
+
+    print('**************truth**************')
+    t1 = timeit.default_timer()
+    em(Y, initparams, fixedparams, ldsregparams, plot_progress=False, save_plots=False, niter=5, Atrue=A_true, num_objvals=5, tol=1e-6)
+    t2 = timeit.default_timer()
+    print('\tFull took', t2 - t1)
+    print()
 
     #print('**************stationary model**************')
     #em_stationary(Y, A_init, C_true, Q_true, R_true, mu0, Q0, iterations = 50, threshold_stop = 0.001)
