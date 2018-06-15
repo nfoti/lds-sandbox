@@ -929,6 +929,9 @@ def em(Y, initparams, fixedparams, ldsregparams, niter=10, Atrue=None, plot_prog
             obj_diff = obj_start - obj
             it += 1
 
+            if debug:
+                print('cur it', it)
+
             #print('took', it, 'iters\t', 'step-size:', step_size / tau)
 
             #if it % 10 == 0:
